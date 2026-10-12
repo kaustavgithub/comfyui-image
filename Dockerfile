@@ -6,6 +6,8 @@
 # Versions are pinned; bump them here and push to rebuild:
 #   ComfyUI     v0.39.0 (commit checked below)
 #   PyTorch     2.14.1 + torchvision 0.29.1, CUDA 13.0 build
+#   Manager     the version ComfyUI pins in manager_requirements.txt; it runs
+#               only with --enable-manager (downloads models on the server)
 # Custom nodes: clone them into /app/custom_nodes below (pinned to a commit).
 FROM python:3.12.15-slim-trixie
 
@@ -30,7 +32,8 @@ WORKDIR /app
 
 RUN pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" \
       --index-url https://download.pytorch.org/whl/cu130 \
- && pip install -r requirements.txt
+ && pip install -r requirements.txt \
+ && pip install -r manager_requirements.txt
 
 RUN useradd --uid 1000 --create-home comfy \
  && mkdir -p /data /app/temp \
