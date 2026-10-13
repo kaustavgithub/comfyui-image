@@ -98,6 +98,18 @@ def _ollama_json(model, content, schema, temperature, seed, images=None):
         raise RuntimeError(f"{model} did not answer with JSON; run again or change the seed. Reply: {reply[:500]}")
 
 
+def _ollama_unload(model):
+    # Ollama keeps a model loaded for minutes; a big writer spans both GPUs and
+    # would leave the narration and video steps without memory on GPU 0.
+    body = {"model": model, "keep_alive": 0}
+    req = urllib.request.Request(f"{OLLAMA_URL}/api/generate", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=60).read()
+    except (urllib.error.URLError, OSError):
+        pass
+
+
 class DocumentaryStory:
     @classmethod
     def INPUT_TYPES(cls):
@@ -140,9 +152,14 @@ class DocumentaryStory:
                 raise ValueError(f"narration_override has {len(texts)} paragraphs, but {n} images are connected")
             facts = []
         else:
-            facts, texts = self._narrate(images, brief, model, writer_model.strip() or model, language,
-                                         words_per_image, temperature, seed, style.strip() or DEFAULT_STYLE)
-            title = self._title(facts, texts, writer_model.strip() or model, language, temperature, seed)
+            writer = writer_model.strip() or model
+            try:
+                facts, texts = self._narrate(images, brief, model, writer, language,
+                                             words_per_image, temperature, seed, style.strip() or DEFAULT_STYLE)
+                title = self._title(facts, texts, writer, language, temperature, seed)
+            finally:
+                for m in {model, writer}:
+                    _ollama_unload(m)
         story = (f"{title}\n\n" if title else "") + "\n\n".join(
             f"[{i + 1}]" + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
             for i, t in enumerate(texts))
