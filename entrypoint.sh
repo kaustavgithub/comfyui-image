@@ -30,17 +30,31 @@ if [ "$(cat "$VENV/.python-version" 2>/dev/null)" != "$PYVER" ]; then
 fi
 export VIRTUAL_ENV="$VENV" PATH="$VENV/bin:$PATH"
 
-# Let the Manager install nodes and models: it refuses unless network_mode is
-# personal_cloud when ComfyUI listens on the network. ComfyUI is reachable only
-# through authentik's login (D46), so this is acceptable here.
+# Our own nodes come with the image (/opt/comfyui-nodes): link each into
+# custom_nodes, replacing an older link.
+for n in /opt/comfyui-nodes/*/; do
+  n=${n%/}
+  ln -sfn "$n" "/data/custom_nodes/$(basename "$n")"
+done
+
+# Manager settings, enforced on every start:
+# - network_mode = personal_cloud: it refuses to install nodes and models
+#   otherwise when ComfyUI listens on the network. ComfyUI is reachable only
+#   through authentik's login (D46), so this is acceptable here.
+# - use_uv = False: uv ignores the image's packages (it doesn't honour the
+#   venv's system-site-packages) and would reinstall them into /data/venv;
+#   pip sees them as installed.
 CFG=/data/user/__manager/config.ini
-if [ ! -f "$CFG" ]; then
-  printf '[default]\nnetwork_mode = personal_cloud\n' > "$CFG"
-elif grep -q '^network_mode' "$CFG"; then
-  sed -i 's/^network_mode.*/network_mode = personal_cloud/' "$CFG"
-else
-  sed -i 's/^\[default\]$/[default]\nnetwork_mode = personal_cloud/' "$CFG"
-fi
+[ -f "$CFG" ] || printf '[default]\n' > "$CFG"
+set_cfg() {
+  if grep -q "^$1 *=" "$CFG"; then
+    sed -i "s/^$1 *=.*/$1 = $2/" "$CFG"
+  else
+    sed -i "s/^\\[default\\]\$/[default]\\n$1 = $2/" "$CFG"
+  fi
+}
+set_cfg network_mode personal_cloud
+set_cfg use_uv False
 
 exec "$VENV/bin/python" /app/main.py \
   --listen 0.0.0.0 \

@@ -15,6 +15,12 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
   `personal_cloud`, so it can install custom nodes and models; they persist on
   the volume across restarts and image updates. ComfyUI itself is updated by
   bumping the `Dockerfile`, not from the Manager.
+- Our own nodes live in `nodes/` and come with the image; the entrypoint
+  links them into `/data/custom_nodes`. `comfyui-documentary`: photos →
+  narration by a vision model on Ollama → Kokoro text-to-speech → Ken Burns
+  video (template "Documentary from photos" in ComfyUI's template browser).
+- The Manager runs with `use_uv = False` (set by the entrypoint): uv ignores
+  the image's packages and would reinstall them into the venv.
 - ComfyUI has no authentication, and anyone who can reach it can install
   code with the Manager. Never expose port 8188 directly; put it behind an
   authenticating proxy.

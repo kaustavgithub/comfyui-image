@@ -11,6 +11,7 @@
 #               only with --enable-manager
 # Custom nodes: installed with the Manager at runtime, into /data/custom_nodes;
 # their Python packages go into a virtualenv at /data/venv (see entrypoint.sh).
+# Our own nodes are in nodes/ and come with the image.
 FROM python:3.12.15-slim-trixie
 
 ARG COMFYUI_VERSION=v0.39.0
@@ -39,6 +40,16 @@ RUN pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" \
       --index-url https://download.pytorch.org/whl/cu130 \
  && pip install -r requirements.txt \
  && pip install -r manager_requirements.txt
+
+# Our own nodes (nodes/, reviewed in Git); the entrypoint links them into
+# /data/custom_nodes. comfyui-documentary needs Kokoro TTS (weights download
+# to /data/models/kokoro on first use) and spaCy's small English model, which
+# Kokoro would otherwise try to download at runtime.
+ARG KOKORO_VERSION=0.9.4
+ARG SPACY_EN=https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+RUN pip install "kokoro==$KOKORO_VERSION" "$SPACY_EN" \
+ && pip check
+COPY nodes/ /opt/comfyui-nodes/
 
 RUN useradd --uid 1000 --create-home comfy \
  && mkdir -p /data \
