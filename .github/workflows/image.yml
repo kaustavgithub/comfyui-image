@@ -50,3 +50,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Reuse unchanged layers (PyTorch above all) from GitHub's Actions
+          # cache; only changed steps rebuild. The cache holds 10 GB per repo,
+          # so a build is occasionally slow again after an eviction.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

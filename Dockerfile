@@ -51,9 +51,12 @@ RUN pip install "kokoro==$KOKORO_VERSION" "$SPACY_EN" \
  && pip check
 COPY nodes/ /opt/comfyui-nodes/
 
+# /app/web/extensions writable: some older custom nodes (e.g.
+# ComfyUI-Custom-Scripts) copy their web files there on every start and fail
+# to load if they can't. It is rebuilt by them at start, so it needn't persist.
 RUN useradd --uid 1000 --create-home comfy \
- && mkdir -p /data \
- && chown comfy:comfy /data
+ && mkdir -p /data /app/web/extensions \
+ && chown comfy:comfy /data /app/web /app/web/extensions
 
 USER comfy
 EXPOSE 8188
