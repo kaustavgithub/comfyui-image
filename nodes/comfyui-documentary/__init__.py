@@ -1,7 +1,8 @@
 """Documentary nodes: photos -> narrated Ken Burns video.
 
-  Documentary Story (Ollama)   per image, a vision model identifies the subject and
-                               what it does; a text model writes the narration
+  Documentary Story (Ollama)   3-10 images, each with an optional note: a vision
+                               model identifies the subject and what it does, a
+                               text model writes the narration in the chosen mood
   Narrate Storyboard (Kokoro)  local text-to-speech, one clip per image
   Ken Burns Video              pan/zoom per image for exactly its narration,
                                rendered on the GPU and streamed to ffmpeg
@@ -31,7 +32,8 @@ import folder_paths
 from comfy_api.latest import InputImpl
 
 STORYBOARD = "DOC_STORYBOARD"
-MAX_IMAGES = 8
+MIN_IMAGES = 3
+MAX_IMAGES = 10
 OLLAMA_URL = os.environ.get("DOC_OLLAMA_URL", "http://ollama.ollama.svc.cluster.local:11434")
 
 # Kokoro-82M (Apache-2.0). Weights download once into the models volume.
@@ -50,25 +52,69 @@ def _jpeg_b64(image, max_side=1024):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _collect_images(kwargs):
-    return [kwargs[f"image_{i}"] for i in range(1, MAX_IMAGES + 1) if kwargs.get(f"image_{i}") is not None]
+def _collect(kwargs):
+    """(image, note) for each connected image, in input order."""
+    out = []
+    for i in range(1, MAX_IMAGES + 1):
+        image = kwargs.get(f"image_{i}")
+        if image is not None:
+            out.append((image, str(kwargs.get(f"note_{i}") or "").strip()))
+    return out
 
 
-DEFAULT_STYLE = (
-    "A wildlife documentary in the style of National Geographic: warm, curious, with a dry sense of humour. "
-    "Name the species by its common name, give one true and surprising fact about its nature or habits, "
-    "and say what it is doing at this moment. If it is busy (hunting, feeding, flying, fighting), make that "
-    "the drama of the shot. If it is just sitting there, end with a funny one- or two-line remark about it, "
-    "like a narrator who has been watching it for far too long."
-)
+# Narration moods: what the writer is asked to sound like. "custom" uses only
+# the custom_style text (which, when filled, also overrides any other mood).
+MOODS = {
+    "documentary (Nat Geo)": (
+        "A wildlife and nature documentary in the style of National Geographic: warm, curious, with a dry sense "
+        "of humour. Name the subject precisely (an animal or plant by its common species name), give one true and "
+        "surprising fact about its nature or habits, and say what it is doing at this moment. If it is busy "
+        "(hunting, feeding, flying, fighting), make that the drama of the moment. If it is just sitting there, end "
+        "with a funny one- or two-line remark about it, like a narrator who has been watching it for far too long."
+    ),
+    "funny": (
+        "A comedy voice-over: playful, cheeky and quick, like a stand-up comedian narrating someone's holiday "
+        "slides. Find the absurd or relatable side of each moment, give the subject an inner monologue if it "
+        "helps, and land a punchline in every segment. Kind, never mean."
+    ),
+    "poetic": (
+        "A lyrical, poetic voice-over: slow, gentle and full of imagery. Notice light, colour, stillness and "
+        "small details, use a fresh metaphor or two, and let each segment end on a quiet, resonant line."
+    ),
+    "bedtime story": (
+        "A bedtime story for young children: soft, simple words, short sentences, a cosy and wondering tone. "
+        "Treat the subjects as gentle characters in one small story that continues from moment to moment, "
+        "and let the last segment wind down towards sleep."
+    ),
+    "epic trailer": (
+        "A dramatic movie-trailer voice-over: big, intense and cinematic, with short punchy sentences and "
+        "rising stakes. Treat ordinary moments as legendary ones; the last segment is the trailer's climax."
+    ),
+    "nostalgic memoir": (
+        "A nostalgic first-person memoir, as if the person who took the photos looks back years later: warm, "
+        "reflective, a little wistful. Speak about the place, the moment and how it felt to be there."
+    ),
+    "sports commentary": (
+        "Live sports commentary: fast, excited play-by-play, as if every moment were the deciding second of a "
+        "final. Describe the action, the tactics and the tension; celebrate even the smallest move."
+    ),
+    "mystery / noir": (
+        "A hard-boiled film-noir detective voice-over: dry, world-weary, first person, full of wry similes. "
+        "Treat each moment as a clue in a case that only half makes sense."
+    ),
+    "custom": "",
+}
+DEFAULT_MOOD = "documentary (Nat Geo)"
 
 LOOK_PROMPT = (
-    "Look at this photograph like a field naturalist. Identify the main subject as precisely as you can: "
-    "for an animal or bird, its common species name (if unsure between close species, name the likeliest). "
-    "Say what it is doing right now, and what it holds in its beak, mouth or claws, if anything. "
-    "Describe the ground or setting it is in (for example grass, water, rock, sky), "
+    "Look at this photograph like a careful observer. Identify the main subject as precisely as you can: "
+    "an animal or plant by its common species name (if unsure between close species, name the likeliest), "
+    "a place or landmark by name if you recognise it, people by what they are doing (never guess who they are). "
+    "Say what it is doing right now, and what it holds in its beak, mouth, hands or claws, if anything. "
+    "Describe the ground or setting it is in (for example grass, water, rock, sky, street, room), "
     "and list other living things in the scene. Facts only, no style. "
     "Background from the person who took the photos: {brief} "
+    "{note}"
     'Answer only with JSON: {{"subject": "...", "activity": "...", "holding": "...", "setting": "...", "others": "..."}}'
 )
 LOOK_FIELDS = ("subject", "activity", "holding", "setting", "others")
@@ -113,25 +159,30 @@ def _ollama_unload(model):
 class DocumentaryStory:
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {f"image_{i}": ("IMAGE",) for i in range(2, MAX_IMAGES + 1)}
+        optional = {f"image_{i}": ("IMAGE",) for i in range(MIN_IMAGES + 1, MAX_IMAGES + 1)}
+        for i in range(1, MAX_IMAGES + 1):
+            optional[f"note_{i}"] = ("STRING", {
+                "default": "", "placeholder": f"Optional: about image {i} (what or who it is, what is happening)",
+                "tooltip": f"Your description of image {i}; the narration treats it as true"})
         return {
             "required": {
-                "image_1": ("IMAGE",),
+                **{f"image_{i}": ("IMAGE",) for i in range(1, MIN_IMAGES + 1)},
                 "brief": ("STRING", {"multiline": True, "default": "",
                                      "placeholder": "Optional: what the photos are about (place, season, people, year)"}),
+                "mood": (list(MOODS), {"default": DEFAULT_MOOD,
+                                       "tooltip": "How the narration sounds; 'custom' uses custom_style"}),
+                "custom_style": ("STRING", {"multiline": True, "default": "",
+                                            "placeholder": "Optional: describe your own tone (e.g. 'a pirate captain telling tall tales'). When filled, used instead of the mood."}),
                 "model": ("STRING", {"default": "qwen2.5vl:7b",
-                                     "tooltip": "Vision model: identifies the subject and its activity, one photo at a time"}),
+                                     "tooltip": "Vision model: identifies the subject and what it does, one image at a time"}),
+                "writer_model": ("STRING", {"default": "qwen3:32b",
+                                            "tooltip": "Text model that writes the narration from what the vision model saw (qwen3:14b: about twice as fast, flatter). Empty: the vision model writes it"}),
                 "language": ("STRING", {"default": "English"}),
                 "words_per_image": ("INT", {"default": 45, "min": 10, "max": 200}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.5, "step": 0.05}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
                 "narration_override": ("STRING", {"multiline": True, "default": "",
                                                   "placeholder": "Optional: your own narration, one paragraph per image, separated by blank lines. Skips the models."}),
-                # New inputs go last, so saved workflows keep their widget values.
-                "writer_model": ("STRING", {"default": "qwen3:32b",
-                                            "tooltip": "Text model that writes the narration from what the vision model saw. Empty: the vision model writes it"}),
-                "style": ("STRING", {"multiline": True, "default": DEFAULT_STYLE,
-                                     "tooltip": "How the narration should sound"}),
             },
             "optional": optional,
         }
@@ -141,22 +192,28 @@ class DocumentaryStory:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, image_1, brief, model, language, words_per_image, temperature, seed,
-            narration_override, writer_model="qwen3:32b", style=DEFAULT_STYLE, **kwargs):
-        images = _collect_images({"image_1": image_1, **kwargs})
-        n = len(images)
-        title = ""
+    def run(self, brief, mood, custom_style, model, writer_model, language, words_per_image, temperature, seed,
+            narration_override, **kwargs):
+        shots = _collect(kwargs)
+        n = len(shots)
+        if n < MIN_IMAGES:
+            raise ValueError(f"Connect at least {MIN_IMAGES} images (connected: {n})")
+        images = [image for image, _ in shots]
+        notes = [note for _, note in shots]
+        style = custom_style.strip() or MOODS.get(mood, "")
+        if not style:
+            raise ValueError("Mood 'custom' needs a custom_style")
+        title, facts = "", []
         if narration_override.strip():
             texts = [p.strip() for p in narration_override.strip().split("\n\n") if p.strip()]
             if len(texts) != n:
                 raise ValueError(f"narration_override has {len(texts)} paragraphs, but {n} images are connected")
-            facts = []
         else:
             writer = writer_model.strip() or model
             try:
-                facts, texts = self._narrate(images, brief, model, writer, language,
-                                             words_per_image, temperature, seed, style.strip() or DEFAULT_STYLE)
-                title = self._title(facts, texts, writer, language, temperature, seed)
+                facts, texts = self._narrate(images, notes, brief, model, writer, language,
+                                             words_per_image, temperature, seed, style)
+                title = self._title(texts, writer, language, style, temperature, seed)
             finally:
                 for m in {model, writer}:
                     _ollama_unload(m)
@@ -165,32 +222,35 @@ class DocumentaryStory:
             for i, t in enumerate(texts))
         return ({"images": images, "texts": texts, "title": title}, story)
 
-    def _narrate(self, images, brief, vision, writer, language, words, temperature, seed, style):
-        # One request per photo: with all photos in one request the model lost
-        # track of which photo it was on, and the narration drifted a photo ahead.
+    def _narrate(self, images, notes, brief, vision, writer, language, words, temperature, seed, style):
+        # One request per image: with all images in one request the model lost
+        # track of which image it was on, and the narration drifted an image ahead.
         # All looks first, then all writing: the two models may share a GPU, and
-        # alternating between them would reload one of them for every photo.
-        look = LOOK_PROMPT.format(brief=brief.strip() or "none")
+        # alternating between them would reload one of them for every image.
         facts, texts = [], []
-        for image in images:
+        for image, note in zip(images, notes):
             comfy.model_management.throw_exception_if_processing_interrupted()
+            look = LOOK_PROMPT.format(brief=brief.strip() or "none",
+                                      note=f"The person who took this photograph says about it (treat as true): {note} " if note else "")
             seen = _ollama_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
             facts.append({k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS})
-        for index, seen in enumerate(facts):
+        for index, (seen, note) in enumerate(zip(facts, notes)):
             comfy.model_management.throw_exception_if_processing_interrupted()
             prompt = (
-                f"You write the voice-over for shot {index + 1} of {len(images)} of a short documentary. Style: {style} "
-                f"What a naturalist saw in this shot: {json.dumps(seen, ensure_ascii=False)}. "
+                f"You write the voice-over for moment {index + 1} of {len(images)} of a short narrated slideshow. "
+                f"Tone and approach: {style} "
+                f"What an observer saw at this moment: {json.dumps(seen, ensure_ascii=False)}. "
+                + (f"The person who took it says (this is true and overrides the observer): {note} " if note else "")
                 + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
-                + f"Write {words} words at most, present tense, to be spoken aloud in {language}. "
-                "Narrate only this shot. What the naturalist saw is the truth: describe that scene and that activity, "
-                "and invent no setting, prey or action that the naturalist did not see. "
-                "Never mention a photo, image, picture, camera, frame, shot or background. "
-                "Only state well-known facts that are true for this species, and for its status in the place named in the background; "
+                + f"Write {words} words at most, present tense unless the tone asks otherwise, to be spoken aloud in {language}. "
+                "Narrate only this moment. Describe the scene and activity that were seen, "
+                "and invent no setting, prey, people or action that were not seen. "
+                "Never mention a photo, image, picture, camera, frame, shot, slide or background. "
+                "Only state real-world facts that are well known and true for this subject and place; "
                 "when unsure of a fact, leave it out rather than guess. "
-                "Use the common name, never a scientific name. Vary how sentences start, and never use the phrase 'right now'. "
-                + (f"Earlier shots were narrated like this; don't repeat their phrases, sentence patterns or jokes: "
-                   f"{json.dumps(texts, ensure_ascii=False)}. " if texts else "")
+                "Use common names, never scientific names. Vary how sentences start, and never use the phrase 'right now'. "
+                + (f"Earlier moments were narrated like this; continue naturally from them, but don't repeat their "
+                   f"phrases, sentence patterns or jokes: {json.dumps(texts, ensure_ascii=False)}. " if texts else "")
                 + 'Answer only with JSON: {"narration": "..."}'
             )
             reply = _ollama_json(writer, prompt, {"type": "object", "properties": {"narration": {"type": "string"}},
@@ -201,9 +261,9 @@ class DocumentaryStory:
             texts.append(text)
         return facts, texts
 
-    def _title(self, facts, texts, writer, language, temperature, seed):
-        prompt = (f"A short documentary narrates these shots: {json.dumps(texts, ensure_ascii=False)}. "
-                  f"Give it a title of at most six words in {language}. "
+    def _title(self, texts, writer, language, style, temperature, seed):
+        prompt = (f"A short narrated slideshow says: {json.dumps(texts, ensure_ascii=False)}. Its tone: {style} "
+                  f"Give it a title of at most six words in {language}, in that tone. "
                   'Answer only with JSON: {"title": "..."}')
         reply = _ollama_json(writer, prompt, {"type": "object", "properties": {"title": {"type": "string"}},
                                               "required": ["title"]}, temperature, seed)
