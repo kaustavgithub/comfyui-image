@@ -270,7 +270,7 @@
   },
   {
    "id": 7,
-   "type": "ShowText|pysssss",
+   "type": "PreviewAny",
    "pos": [
     380,
     600
@@ -285,8 +285,8 @@
    "title": "Story (read it here)",
    "inputs": [
     {
-     "name": "text",
-     "type": "STRING",
+     "name": "source",
+     "type": "*",
      "link": 7
     }
    ],
@@ -294,12 +294,11 @@
     {
      "name": "STRING",
      "type": "STRING",
-     "links": [],
-     "shape": 6
+     "links": []
     }
    ],
    "properties": {
-    "Node name for S&R": "ShowText|pysssss"
+    "Node name for S&R": "PreviewAny"
    }
   },
   {
@@ -486,7 +485,7 @@
    1,
    7,
    0,
-   "STRING"
+   "*"
   ],
   [
    8,
