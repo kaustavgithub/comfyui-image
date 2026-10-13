@@ -1,14 +1,16 @@
 # ComfyUI for the homelab k3s cluster (GPU node, NVIDIA container runtime).
 # The driver comes from the host at runtime; PyTorch's cu130 wheels bring the
-# CUDA libraries. Everything a user creates (models, input, output, user
-# settings and workflows) lives on a volume at /data, never in the image.
+# CUDA libraries. Everything a user creates or installs (models, input,
+# output, user settings and workflows, custom nodes and their Python packages)
+# lives on a volume at /data, never in the image.
 #
 # Versions are pinned; bump them here and push to rebuild:
 #   ComfyUI     v0.39.0 (commit checked below)
 #   PyTorch     2.14.1 + torchvision 0.29.1, CUDA 13.0 build
 #   Manager     the version ComfyUI pins in manager_requirements.txt; it runs
-#               only with --enable-manager (downloads models on the server)
-# Custom nodes: clone them into /app/custom_nodes below (pinned to a commit).
+#               only with --enable-manager
+# Custom nodes: installed with the Manager at runtime, into /data/custom_nodes;
+# their Python packages go into a virtualenv at /data/venv (see entrypoint.sh).
 FROM python:3.12.15-slim-trixie
 
 ARG COMFYUI_VERSION=v0.39.0
@@ -20,8 +22,11 @@ ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1
 
+# git: the Manager clones custom nodes. ffmpeg, libgl1, libglib2.0-0: what
+# common custom nodes need at runtime (video nodes, OpenCV). build-essential:
+# for node requirements without a prebuilt wheel.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git \
+ && apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 build-essential \
  && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch "$COMFYUI_VERSION" https://github.com/comfyanonymous/ComfyUI.git /app \
@@ -36,8 +41,8 @@ RUN pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" \
  && pip install -r manager_requirements.txt
 
 RUN useradd --uid 1000 --create-home comfy \
- && mkdir -p /data /app/temp \
- && chown comfy:comfy /data /app/temp
+ && mkdir -p /data \
+ && chown comfy:comfy /data
 
 USER comfy
 EXPOSE 8188

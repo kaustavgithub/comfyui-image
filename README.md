@@ -6,14 +6,18 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
 - Built by GitHub Actions on every push to `main`:
   `ghcr.io/kaustavgithub/comfyui-image:sha-<commit>` and `:latest`.
 - Versions are pinned in the `Dockerfile` (ComfyUI release + commit, PyTorch).
-- All user data goes to a volume at `/data` (`models/`, `input/`, `output/`,
-  `user/`); the entrypoint creates the folders.
+- Everything a user creates or installs goes to a volume at `/data`
+  (`--base-directory /data`): `models/`, `input/`, `output/`, `user/`,
+  `custom_nodes/`, and `venv/`, a virtualenv on top of the image's packages
+  for the custom nodes' Python packages. The entrypoint creates them.
 - ComfyUI-Manager is installed (the version ComfyUI pins) and runs with
-  `--enable-manager`, so missing models download to `/data/models` on the
-  server instead of into the browser. Custom nodes still go in the
-  `Dockerfile`, pinned to a commit, so every change is reviewed in Git.
-- ComfyUI has no authentication. Never expose port 8188 directly; put it
-  behind an authenticating proxy.
+  `--enable-manager`. The entrypoint sets its `network_mode` to
+  `personal_cloud`, so it can install custom nodes and models; they persist on
+  the volume across restarts and image updates. ComfyUI itself is updated by
+  bumping the `Dockerfile`, not from the Manager.
+- ComfyUI has no authentication, and anyone who can reach it can install
+  code with the Manager. Never expose port 8188 directly; put it behind an
+  authenticating proxy.
 
 Run locally:
 
