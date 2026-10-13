@@ -17,7 +17,8 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
   bumping the `Dockerfile`, not from the Manager.
 - Our own nodes live in `nodes/` and come with the image; the entrypoint
   links them into `/data/custom_nodes`. `comfyui-documentary`: photos →
-  narration by a vision model on Ollama → Kokoro text-to-speech → Ken Burns
+  per photo, a vision model on Ollama names the subject and a text model
+  writes the narration → Kokoro text-to-speech → Ken Burns
   video (template "Documentary from photos" in ComfyUI's template browser).
 - The Manager runs with `use_uv = False` (set by the entrypoint): uv ignores
   the image's packages and would reinstall them into the venv.
