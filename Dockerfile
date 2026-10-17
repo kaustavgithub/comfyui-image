@@ -49,6 +49,27 @@ ARG KOKORO_VERSION=0.9.4
 ARG SPACY_EN=https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 RUN pip install "kokoro==$KOKORO_VERSION" "$SPACY_EN" \
  && pip check
+
+# Chatterbox TTS (the documentary's default voice; weights download to
+# /data/models/chatterbox on first use). Its own pins (torch 2.6, numpy < 2,
+# diffusers 0.29, ...) would replace the image's PyTorch, so it goes in
+# without dependencies, plus exactly the packages tested with it in the pod
+# (2026-10-14). pip check would only report chatterbox-tts's own pins and the
+# web-demo/Japanese/Chinese extras it doesn't need here (gradio, pykakasi,
+# spacy-pkuseg), so it isn't run after this layer.
+ARG CHATTERBOX_VERSION=0.1.7
+RUN pip install --no-deps "chatterbox-tts==$CHATTERBOX_VERSION" \
+ && pip install --no-deps "torchaudio==2.11.0" --index-url https://download.pytorch.org/whl/cu130 \
+ && pip install --no-deps \
+      conformer==0.3.2 diffusers==0.35.2 librosa==1.0.0 lazy-loader==0.6 \
+      llvmlite==0.50.0 numba==0.68.0 decorator==5.3.1 msgpack==1.2.3 \
+      pooch==1.9.0 platformdirs==4.13.0 scikit-learn==1.9.1 threadpoolctl==3.7.0 \
+      soundfile==0.14.0 soxr==1.1.0 omegaconf==2.4.0 onnx==1.23.2 \
+      protobuf==7.36.2 ml_dtypes==0.6.0 pyloudnorm==0.2.0 resemble-perth==1.0.1 \
+      s3tokenizer==0.3.0 narwhals==2.27.1 importlib_metadata==9.0.1 zipp==4.1.1 \
+      pre_commit==4.7.0 cfgv==3.5.0 identify==2.6.20 nodeenv==1.11.0 \
+      virtualenv==21.14.7 distlib==0.4.3 python-discovery==1.6.2 \
+ && python -c "import chatterbox.tts, torchaudio, librosa, perth, s3tokenizer"
 COPY nodes/ /opt/comfyui-nodes/
 
 # /app/web/extensions writable: some older custom nodes (e.g.

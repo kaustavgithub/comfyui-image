@@ -3,7 +3,8 @@
   Documentary Story (Ollama)   3-10 images, each with an optional note: a vision
                                model identifies the subject and what it does, a
                                text model writes the narration in the chosen mood
-  Narrate Storyboard (Kokoro)  local text-to-speech, one clip per image
+  Narrate Storyboard           local text-to-speech, one clip per image: Chatterbox
+                               (expressive, voice and emotion from the mood) or Kokoro
   Ken Burns Video              pan/zoom per image for exactly its narration,
                                rendered on the GPU and streamed to ffmpeg
 
@@ -66,45 +67,68 @@ def _collect(kwargs):
 # the custom_style text (which, when filled, also overrides any other mood).
 MOODS = {
     "documentary (Nat Geo)": (
-        "A wildlife and nature documentary in the style of National Geographic: warm, curious, with a dry sense "
-        "of humour. Name the subject precisely (an animal or plant by its common species name), give one true and "
-        "surprising fact about its nature or habits, and say what it is doing at this moment. If it is busy "
-        "(hunting, feeding, flying, fighting), make that the drama of the moment. If it is just sitting there, end "
-        "with a funny one- or two-line remark about it, like a narrator who has been watching it for far too long."
+        "A National Geographic wildlife documentary narrator: warm, curious, with a dry sense of humour. "
+        "Tell the life story behind each animal: how it survives, hunts, migrates, raises young or gets through "
+        "the season, and one surprising true fact, tied to what it is doing at that moment. When it is doing "
+        "nothing in particular, end with a funny one-liner, like a narrator who has watched it for far too long."
     ),
     "funny": (
-        "A comedy voice-over: playful, cheeky and quick, like a stand-up comedian narrating someone's holiday "
-        "slides. Find the absurd or relatable side of each moment, give the subject an inner monologue if it "
-        "helps, and land a punchline in every segment. Kind, never mean."
+        "A stand-up comedian narrating someone's nature slideshow: cheeky, quick and kind. Give the subjects "
+        "inner monologues, petty rivalries and human problems (rent, Mondays, group chats, diets). Build a running "
+        "gag that comes back across the moments, and end every moment on a punchline."
     ),
     "poetic": (
-        "A lyrical, poetic voice-over: slow, gentle and full of imagery. Notice light, colour, stillness and "
-        "small details, use a fresh metaphor or two, and let each segment end on a quiet, resonant line."
+        "A lyrical, contemplative voice-over: slow, gentle, full of fresh imagery. Speak about what the moment "
+        "means: time, seasons, patience, belonging, impermanence. Each moment ends on a quiet, resonant line."
     ),
     "bedtime story": (
-        "A bedtime story for young children: soft, simple words, short sentences, a cosy and wondering tone. "
-        "Treat the subjects as gentle characters in one small story that continues from moment to moment, "
-        "and let the last segment wind down towards sleep."
+        "A bedtime story for young children: soft, simple words, short sentences, cosy and full of wonder. "
+        "Give the animals friendly names and make them characters in one small adventure that continues from "
+        "moment to moment (they meet, help each other, find something). The last moment winds down to sleep."
     ),
     "epic trailer": (
-        "A dramatic movie-trailer voice-over: big, intense and cinematic, with short punchy sentences and "
-        "rising stakes. Treat ordinary moments as legendary ones; the last segment is the trailer's climax."
+        "The voice-over of a blockbuster movie trailer for an imagined film starring these creatures. "
+        "Pitch the film, don't describe the shots. Give it a real plot: a named hero with a concrete goal (for "
+        "example, to survive the winter or win back a territory), a concrete rival or danger, allies, a twist, "
+        "and a climax; each moment moves that plot on. Short, punchy, dramatic lines and fragments ('In a world "
+        "where…', 'This winter…'), but concrete, not vague abstractions. The last moment ends with the film's "
+        "title and a tagline."
     ),
     "nostalgic memoir": (
-        "A nostalgic first-person memoir, as if the person who took the photos looks back years later: warm, "
-        "reflective, a little wistful. Speak about the place, the moment and how it felt to be there."
+        "A first-person memoir, years later, by the person who took the photos: warm, reflective, a little "
+        "wistful. Talk about the trip and the feeling of being there: the cold mornings, the waiting, the "
+        "people, what that moment meant to you, and what has changed since."
     ),
     "sports commentary": (
-        "Live sports commentary: fast, excited play-by-play, as if every moment were the deciding second of a "
-        "final. Describe the action, the tactics and the tension; celebrate even the smallest move."
+        "Live sports commentary of a championship final: fast, excited play-by-play. The animals are star "
+        "athletes with records and rivalries; give stats, tactics, replays and a running score across the "
+        "moments, building to a final whistle and a winner."
     ),
     "mystery / noir": (
-        "A hard-boiled film-noir detective voice-over: dry, world-weary, first person, full of wry similes. "
-        "Treat each moment as a clue in a case that only half makes sense."
+        "A hard-boiled film-noir detective voice-over, first person: dry, world-weary, full of wry similes. "
+        "The animals are suspects, witnesses and the accused in one case that unfolds across the moments, with "
+        "clues, a twist and a verdict at the end."
     ),
     "custom": "",
 }
 DEFAULT_MOOD = "documentary (Nat Geo)"
+
+# How each mood sounds in Narrate Storyboard. voice: a Kokoro voice (Chatterbox
+# copies it from a reference clip); intensity, cfg: Chatterbox's exaggeration
+# and cfg_weight (lower cfg = faster, freer delivery); stretch: pace (<1 slower);
+# semitones: pitch shift; kokoro_speed: pace with the Kokoro engine.
+# "epic trailer" is your pick K (2026-10-14).
+VOICE_PRESETS = {
+    "documentary (Nat Geo)": {"voice": "bm_george", "intensity": 0.5, "cfg": 0.5, "stretch": 1.0, "semitones": 0, "kokoro_speed": 0.95},
+    "funny": {"voice": "am_puck", "intensity": 0.8, "cfg": 0.4, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.05},
+    "poetic": {"voice": "bf_emma", "intensity": 0.45, "cfg": 0.55, "stretch": 0.92, "semitones": 0, "kokoro_speed": 0.85},
+    "bedtime story": {"voice": "af_heart", "intensity": 0.35, "cfg": 0.6, "stretch": 0.95, "semitones": 0, "kokoro_speed": 0.85},
+    "epic trailer": {"voice": "af_heart", "intensity": 1.0, "cfg": 0.4, "stretch": 0.92, "semitones": -1, "kokoro_speed": 0.85},
+    "nostalgic memoir": {"voice": "bf_isabella", "intensity": 0.5, "cfg": 0.5, "stretch": 0.95, "semitones": 0, "kokoro_speed": 0.9},
+    "sports commentary": {"voice": "am_michael", "intensity": 1.4, "cfg": 0.3, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.15},
+    "mystery / noir": {"voice": "bm_lewis", "intensity": 0.6, "cfg": 0.4, "stretch": 0.95, "semitones": -1, "kokoro_speed": 0.9},
+}
+AUTO_VOICE = "auto (from mood)"
 
 LOOK_PROMPT = (
     "Look at this photograph like a careful observer. Identify the main subject as precisely as you can: "
@@ -142,6 +166,32 @@ def _ollama_json(model, content, schema, temperature, seed, images=None):
         return json.loads(reply)
     except json.JSONDecodeError:
         raise RuntimeError(f"{model} did not answer with JSON; run again or change the seed. Reply: {reply[:500]}")
+
+
+def _reference_facts(subject, limit=1200):
+    """The intro of the subject's English Wikipedia article (via search), so the
+    writer has true facts to use instead of inventing them. "" if not found."""
+    import urllib.parse
+
+    if not subject or subject.lower() in ("none", "unknown", "nothing"):
+        return ""
+    headers = {"User-Agent": "comfyui-documentary/1.0 (homelab)"}
+    api = "https://en.wikipedia.org/w/api.php?"
+    try:
+        q = urllib.parse.urlencode({"action": "query", "list": "search", "srsearch": subject, "srlimit": 1,
+                                    "format": "json"})
+        with urllib.request.urlopen(urllib.request.Request(api + q, headers=headers), timeout=15) as r:
+            hits = json.load(r)["query"]["search"]
+        if not hits:
+            return ""
+        q = urllib.parse.urlencode({"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
+                                    "redirects": 1, "titles": hits[0]["title"], "format": "json"})
+        with urllib.request.urlopen(urllib.request.Request(api + q, headers=headers), timeout=15) as r:
+            pages = json.load(r)["query"]["pages"]
+        text = next(iter(pages.values())).get("extract", "").strip()
+        return f"{hits[0]['title']}: {text[:limit]}" if text else ""
+    except (urllib.error.URLError, OSError, KeyError, ValueError, StopIteration):
+        return ""
 
 
 def _ollama_unload(model):
@@ -211,63 +261,85 @@ class DocumentaryStory:
         else:
             writer = writer_model.strip() or model
             try:
-                facts, texts = self._narrate(images, notes, brief, model, writer, language,
-                                             words_per_image, temperature, seed, style)
-                title = self._title(texts, writer, language, style, temperature, seed)
+                facts, texts, title = self._narrate(images, notes, brief, model, writer, language,
+                                                    words_per_image, temperature, seed, style)
             finally:
                 for m in {model, writer}:
                     _ollama_unload(m)
         story = (f"{title}\n\n" if title else "") + "\n\n".join(
             f"[{i + 1}]" + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
             for i, t in enumerate(texts))
-        return ({"images": images, "texts": texts, "title": title}, story)
+        return ({"images": images, "texts": texts, "title": title, "mood": mood}, story)
 
     def _narrate(self, images, notes, brief, vision, writer, language, words, temperature, seed, style):
-        # One request per image: with all images in one request the model lost
-        # track of which image it was on, and the narration drifted an image ahead.
-        # All looks first, then all writing: the two models may share a GPU, and
-        # alternating between them would reload one of them for every image.
-        facts, texts = [], []
+        # One look per image: with all images in one request the vision model lost
+        # track of which image it was on. All looks first, then all writing: the
+        # two models may share a GPU, and alternating would reload one each time.
+        facts = []
         for image, note in zip(images, notes):
             comfy.model_management.throw_exception_if_processing_interrupted()
             look = LOOK_PROMPT.format(brief=brief.strip() or "none",
                                       note=f"The person who took this photograph says about it (treat as true): {note} " if note else "")
             seen = _ollama_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
             facts.append({k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS})
-        for index, (seen, note) in enumerate(zip(facts, notes)):
+        shots = [{**f, **({"photographer_note": n} if n else {})} for f, n in zip(facts, notes)]
+        references = {}
+        for shot in shots:
+            subject = shot.get("photographer_note") or shot["subject"]
+            if subject not in references:
+                references[subject] = _reference_facts(shot["subject"] if len(subject) > 60 else subject)
+            shot["reference"] = references[subject]
+        n = len(images)
+        common = (
+            f"Tone and approach: {style} "
+            + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
+            + "The viewer sees each picture while the narration plays, so never describe what is visible "
+            "(colours, poses, perches, grass, sky, light). Use what is in the pictures only as the starting point, "
+            "and give the viewer what they can't see: the story, the stakes, feelings, meaning, jokes, true facts. "
+            "Never mention a photo, image, picture, camera, frame, shot, slide or background. "
+            "Real-world facts (numbers, habits, abilities, records) may only come from the 'reference' text given "
+            "for a moment; never invent or embellish one, and if there is no reference, use no facts. "
+            "Don't label facts ('fun fact'). Use common names, never scientific names. "
+        )
+        # Plan first, so the moments add up to one story instead of n captions.
+        plan_prompt = (
+            f"You are writing a narrated slideshow of {n} moments, in {language}. {common}"
+            f"What an observer saw in each moment, in order: {json.dumps(shots, ensure_ascii=False)}. "
+            f"Plan the narration as one story in this tone: a title, a one-sentence premise, and exactly {n} beats, "
+            "one per moment in order, each saying what that moment's narration does for the story "
+            "(not what the picture shows). "
+            'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...]}'
+        )
+        plan = _ollama_json(writer, plan_prompt, {
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "premise": {"type": "string"},
+                           "beats": {"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n}},
+            "required": ["title", "premise", "beats"]}, temperature, seed)
+        beats = [str(b).strip() for b in plan.get("beats", [])]
+        beats += [""] * (n - len(beats))
+        texts = []
+        for index, (shot, beat) in enumerate(zip(shots, beats)):
             comfy.model_management.throw_exception_if_processing_interrupted()
             prompt = (
-                f"You write the voice-over for moment {index + 1} of {len(images)} of a short narrated slideshow. "
-                f"Tone and approach: {style} "
-                f"What an observer saw at this moment: {json.dumps(seen, ensure_ascii=False)}. "
-                + (f"The person who took it says (this is true and overrides the observer): {note} " if note else "")
-                + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
-                + f"Write {words} words at most, present tense unless the tone asks otherwise, to be spoken aloud in {language}. "
-                "Narrate only this moment. Describe the scene and activity that were seen, "
-                "and invent no setting, prey, people or action that were not seen. "
-                "Never mention a photo, image, picture, camera, frame, shot, slide or background. "
-                "Only state real-world facts that are well known and true for this subject and place; "
-                "when unsure of a fact, leave it out rather than guess. "
-                "Use common names, never scientific names. Vary how sentences start, and never use the phrase 'right now'. "
-                + (f"Earlier moments were narrated like this; continue naturally from them, but don't repeat their "
-                   f"phrases, sentence patterns or jokes: {json.dumps(texts, ensure_ascii=False)}. " if texts else "")
+                f"You write the narration for moment {index + 1} of {n} of a narrated slideshow titled "
+                f"\"{plan.get('title', '')}\". {common}"
+                f"The story's premise: {plan.get('premise', '')} "
+                f"This moment's job in the story: {beat} "
+                f"What an observer saw in this moment (the viewer sees it too; don't list it): "
+                f"{json.dumps(shot, ensure_ascii=False)}. "
+                f"Write {words} words at most, to be spoken aloud in {language}. "
+                "Vary how sentences start, and never use the phrase 'right now'. "
+                + (f"The moments so far were narrated like this; continue the story from them without repeating "
+                   f"their phrases, images or jokes: {json.dumps(texts, ensure_ascii=False)}. " if texts else "")
                 + 'Answer only with JSON: {"narration": "..."}'
             )
             reply = _ollama_json(writer, prompt, {"type": "object", "properties": {"narration": {"type": "string"}},
-                                                  "required": ["narration"]}, temperature, seed + index)
+                                                  "required": ["narration"]}, temperature, seed + index + 1)
             text = str(reply.get("narration", "")).strip()
             if not text:
                 raise RuntimeError(f"{writer} wrote no narration for image {index + 1}; run again or change the seed")
             texts.append(text)
-        return facts, texts
-
-    def _title(self, texts, writer, language, style, temperature, seed):
-        prompt = (f"A short narrated slideshow says: {json.dumps(texts, ensure_ascii=False)}. Its tone: {style} "
-                  f"Give it a title of at most six words in {language}, in that tone. "
-                  'Answer only with JSON: {"title": "..."}')
-        reply = _ollama_json(writer, prompt, {"type": "object", "properties": {"title": {"type": "string"}},
-                                              "required": ["title"]}, temperature, seed)
-        return str(reply.get("title", "")).strip()
+        return facts, texts, str(plan.get("title", "")).strip()
 
 
 _kokoro = {}
@@ -299,8 +371,15 @@ class NarrateStoryboard:
         return {
             "required": {
                 "storyboard": (STORYBOARD,),
-                "voice": (VOICES, {"default": "bm_george"}),
-                "speed": ("FLOAT", {"default": 0.95, "min": 0.5, "max": 2.0, "step": 0.05}),
+                "voice": ([AUTO_VOICE] + VOICES, {"default": AUTO_VOICE,
+                                                  "tooltip": "auto: the mood's voice (see Documentary Story)"}),
+                "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05,
+                                    "tooltip": "Pace on top of the mood's own pace (1.0 = as the mood sets it)"}),
+                # New inputs go last, so saved workflows keep their widget values.
+                "engine": (["chatterbox", "kokoro"], {"default": "chatterbox",
+                                                      "tooltip": "chatterbox: expressive, follows the mood; kokoro: fast, calm and even"}),
+                "intensity": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05,
+                                        "tooltip": "Chatterbox emotion intensity; 0 = as the mood sets it (0.35 calm ... 1.4 very excited)"}),
             },
         }
 
@@ -309,22 +388,121 @@ class NarrateStoryboard:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, storyboard, voice, speed):
-        from huggingface_hub import hf_hub_download
-
+    def run(self, storyboard, voice, speed, engine="kokoro", intensity=0.0):
+        preset = {**VOICE_PRESETS[DEFAULT_MOOD], **VOICE_PRESETS.get(storyboard.get("mood"), {})}
+        if voice != AUTO_VOICE:
+            preset["voice"] = voice
+        if intensity > 0:
+            preset["intensity"] = intensity
         device = comfy.model_management.get_torch_device()
-        pipeline = _kokoro_pipeline(voice[0], device)
-        voice_path = hf_hub_download(KOKORO_REPO, f"voices/{voice}.pt", local_dir=_kokoro_dir())
-        clips = []
-        for text in storyboard["texts"]:
-            parts = [r.audio.detach().cpu().numpy() for r in pipeline(text, voice=voice_path, speed=speed)
-                     if r.audio is not None]
-            if not parts:
-                raise RuntimeError(f"Kokoro produced no audio for: {text[:80]}")
-            clips.append(np.concatenate(parts).astype(np.float32))
+        if engine == "kokoro":
+            clips = _kokoro_clips(storyboard["texts"], preset["voice"], preset["kokoro_speed"] * speed, device)
+        else:
+            clips = _chatterbox_clips(storyboard["texts"], preset, speed, device)
         full = np.concatenate(clips)
         audio = {"waveform": torch.from_numpy(full)[None, None, :], "sample_rate": KOKORO_RATE}
         return ({**storyboard, "audio": clips, "sample_rate": KOKORO_RATE}, audio)
+
+
+def _kokoro_clips(texts, voice, speed, device):
+    from huggingface_hub import hf_hub_download
+
+    pipeline = _kokoro_pipeline(voice[0], device)
+    voice_path = hf_hub_download(KOKORO_REPO, f"voices/{voice}.pt", local_dir=_kokoro_dir())
+    clips = []
+    for text in texts:
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        parts = [r.audio.detach().cpu().numpy() for r in pipeline(text, voice=voice_path, speed=speed)
+                 if r.audio is not None]
+        if not parts:
+            raise RuntimeError(f"Kokoro produced no audio for: {text[:80]}")
+        clips.append(np.concatenate(parts).astype(np.float32))
+    return clips
+
+
+# Chatterbox (Resemble AI, MIT): expressive TTS with an emotion-intensity
+# control ("exaggeration"). It takes its voice from a reference clip; we make
+# that clip with Kokoro, so the same voice names work for both engines.
+_chatterbox = {}
+REFERENCE_TEXT = ("The river bends through the valley, past the old stone bridge, where the morning light "
+                  "falls softly on the water and the reeds lean in the wind.")
+
+
+def _chatterbox_model(device):
+    os.environ.setdefault("HF_HOME", os.path.join(folder_paths.models_dir, "chatterbox", "hf"))
+    from chatterbox.tts import ChatterboxTTS
+
+    if "model" not in _chatterbox:
+        _chatterbox["model"] = ChatterboxTTS.from_pretrained(device=str(device))
+    model = _chatterbox["model"]
+    _chatterbox_move(model, device)
+    return model
+
+
+def _chatterbox_move(model, device):
+    # ComfyUI doesn't manage this model: park it in RAM between runs so its
+    # ~3.4 GB on GPU 0 are free for other models.
+    for part in ("t3", "s3gen", "ve"):
+        getattr(model, part).to(device)
+    if model.conds is not None:
+        model.conds = model.conds.to(device)
+    model.device = str(device)
+
+
+def _reference_clip(voice, device):
+    path = os.path.join(folder_paths.models_dir, "chatterbox", "voices", f"{voice}.wav")
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        clip = np.concatenate(_kokoro_clips([REFERENCE_TEXT], voice, 0.9, device))
+        _write_wav(path, clip, KOKORO_RATE)
+    return path
+
+
+def _sentences(text, limit=300):
+    """Chunks of whole sentences up to ~limit characters: Chatterbox stops after
+    about 40 s of speech per call."""
+    import re
+
+    chunks, current = [], ""
+    for sentence in re.split(r"(?<=[.!?…])\s+", text.strip()):
+        if current and len(current) + len(sentence) + 1 > limit:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _chatterbox_clips(texts, preset, speed, device):
+    import librosa
+
+    model = _chatterbox_model(device)
+    try:
+        reference = _reference_clip(preset["voice"], device)
+        stretch = preset["stretch"] * speed
+        clips = []
+        for text in texts:
+            parts = []
+            for chunk in _sentences(text):
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                wav = model.generate(chunk, audio_prompt_path=reference, exaggeration=preset["intensity"],
+                                     cfg_weight=preset["cfg"]).squeeze(0).cpu().numpy().astype(np.float32)
+                parts.append(wav)
+            clip = np.concatenate(parts)
+            if model.sr != KOKORO_RATE:
+                clip = librosa.resample(clip, orig_sr=model.sr, target_sr=KOKORO_RATE)
+            if preset["semitones"]:
+                clip = librosa.effects.pitch_shift(clip, sr=KOKORO_RATE, n_steps=preset["semitones"])
+            if abs(stretch - 1.0) > 1e-3:
+                clip = librosa.effects.time_stretch(clip, rate=stretch)
+            peak = float(np.abs(clip).max()) or 1.0
+            clips.append((clip / peak * 0.9).astype(np.float32))
+        return clips
+    finally:
+        _chatterbox_move(model, "cpu")
+        torch.cuda.empty_cache()
 
 
 def _ease(t):
@@ -477,6 +655,6 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DocumentaryStory": "Documentary Story (Ollama)",
-    "DocumentaryNarrate": "Narrate Storyboard (Kokoro)",
+    "DocumentaryNarrate": "Narrate Storyboard",
     "DocumentaryKenBurnsVideo": "Ken Burns Video",
 }
