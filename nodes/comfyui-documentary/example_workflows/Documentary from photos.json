@@ -1,17 +1,17 @@
 {
-  "last_node_id": 12,
-  "last_link_id": 10,
+  "last_node_id": 14,
+  "last_link_id": 12,
   "nodes": [
     {
       "id": 1,
-      "type": "LoadImage",
+      "type": "DocumentaryPhoto",
       "pos": [
         0,
         0
       ],
       "size": [
         300,
-        314
+        420
       ],
       "flags": {},
       "order": 0,
@@ -20,36 +20,37 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "IMAGE",
-          "type": "IMAGE",
+          "name": "photo",
+          "type": "DOC_PHOTO",
           "links": [
             1
           ]
         },
         {
-          "name": "MASK",
-          "type": "MASK",
+          "name": "image",
+          "type": "IMAGE",
           "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadImage"
+        "Node name for S&R": "DocumentaryPhoto"
       },
       "widgets_values": [
         "file_1.jpg",
-        "image"
+        "",
+        ""
       ]
     },
     {
       "id": 2,
-      "type": "LoadImage",
+      "type": "DocumentaryPhoto",
       "pos": [
         0,
-        330
+        440
       ],
       "size": [
         300,
-        314
+        420
       ],
       "flags": {},
       "order": 1,
@@ -58,36 +59,37 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "IMAGE",
-          "type": "IMAGE",
+          "name": "photo",
+          "type": "DOC_PHOTO",
           "links": [
             2
           ]
         },
         {
-          "name": "MASK",
-          "type": "MASK",
+          "name": "image",
+          "type": "IMAGE",
           "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadImage"
+        "Node name for S&R": "DocumentaryPhoto"
       },
       "widgets_values": [
         "file_2.jpg",
-        "image"
+        "",
+        ""
       ]
     },
     {
       "id": 3,
-      "type": "LoadImage",
+      "type": "DocumentaryPhoto",
       "pos": [
         0,
-        660
+        880
       ],
       "size": [
         300,
-        314
+        420
       ],
       "flags": {},
       "order": 2,
@@ -96,24 +98,25 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "IMAGE",
-          "type": "IMAGE",
+          "name": "photo",
+          "type": "DOC_PHOTO",
           "links": [
             3
           ]
         },
         {
-          "name": "MASK",
-          "type": "MASK",
+          "name": "image",
+          "type": "IMAGE",
           "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadImage"
+        "Node name for S&R": "DocumentaryPhoto"
       },
       "widgets_values": [
         "file_3.jpg",
-        "image"
+        "",
+        ""
       ]
     },
     {
@@ -133,52 +136,52 @@
       "inputs": [
         {
           "name": "image_1",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": 1
         },
         {
           "name": "image_2",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": 2
         },
         {
           "name": "image_3",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": 3
         },
         {
           "name": "image_4",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_5",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_6",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_7",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_8",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_9",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         },
         {
           "name": "image_10",
-          "type": "IMAGE",
+          "type": "IMAGE,DOC_PHOTO",
           "link": null
         }
       ],
@@ -307,7 +310,7 @@
       "id": 10,
       "type": "DocumentaryKenBurnsVideo",
       "pos": [
-        1240,
+        1620,
         0
       ],
       "size": [
@@ -321,7 +324,7 @@
         {
           "name": "storyboard",
           "type": "DOC_STORYBOARD",
-          "link": 8
+          "link": 11
         }
       ],
       "outputs": [
@@ -341,7 +344,7 @@
       "id": 11,
       "type": "SaveVideo",
       "pos": [
-        1640,
+        2020,
         0
       ],
       "size": [
@@ -368,19 +371,86 @@
       "type": "Note",
       "pos": [
         0,
-        1000
+        1330
       ],
       "size": [
         300,
-        260
+        330
       ],
       "flags": {},
       "order": 0,
       "mode": 0,
       "properties": {},
       "widgets_values": [
-        "3 to 10 images.\n\nUpload a photo into each Load Image node (file_1, file_2, file_3 are placeholders).\n\nMore images: copy a Load Image node (Ctrl+C, Ctrl+V) and connect it to image_4, image_5 ... image_10 on Documentary Story.\n\nnote_1 ... note_10 on Documentary Story: optional, what is in that image (e.g. 'zitting cisticola, calling'). The narration treats it as true.\n\nmood: the tone of the narration. custom_style: your own tone, used instead of the mood."
+        "3 to 10 photos.\n\nUpload a photo into each Documentary Photo node (file_1, file_2, file_3 are placeholders). name: optional, what or who it is (e.g. 'Eurasian blue tit'); used as true and to look up its facts. note: optional, what is happening.\n\nMore photos: copy a Documentary Photo node (Ctrl+C, Ctrl+V) and connect it to image_4, image_5 ... image_10 on Documentary Story. A plain Load Image works too.\n\nmood: the tone of the narration, the voice and the music. custom_style: your own tone, used instead of the mood.\n\nMusic: Documentary Music writes instrumental music for the mood, as long as the narration (style: your own description). Ken Burns Video mixes it in: music_volume 0 = no music.\n\nStored files: menu Documentary \u2192 Stored files."
       ]
+    },
+    {
+      "id": 13,
+      "type": "DocumentaryMusic",
+      "pos": [
+        1240,
+        0
+      ],
+      "size": [
+        340,
+        250
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "storyboard",
+          "type": "DOC_STORYBOARD",
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "storyboard",
+          "type": "DOC_STORYBOARD",
+          "links": [
+            11
+          ]
+        },
+        {
+          "name": "music",
+          "type": "AUDIO",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "DocumentaryMusic"
+      }
+    },
+    {
+      "id": 14,
+      "type": "PreviewAudio",
+      "pos": [
+        1240,
+        300
+      ],
+      "size": [
+        340,
+        100
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 12
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAudio"
+      }
     }
   ],
   "links": [
@@ -390,7 +460,7 @@
       0,
       6,
       0,
-      "IMAGE"
+      "DOC_PHOTO"
     ],
     [
       2,
@@ -398,7 +468,7 @@
       0,
       6,
       1,
-      "IMAGE"
+      "DOC_PHOTO"
     ],
     [
       3,
@@ -406,7 +476,7 @@
       0,
       6,
       2,
-      "IMAGE"
+      "DOC_PHOTO"
     ],
     [
       6,
@@ -428,7 +498,7 @@
       8,
       8,
       0,
-      10,
+      13,
       0,
       "DOC_STORYBOARD"
     ],
@@ -447,6 +517,22 @@
       11,
       0,
       "VIDEO"
+    ],
+    [
+      11,
+      13,
+      0,
+      10,
+      0,
+      "DOC_STORYBOARD"
+    ],
+    [
+      12,
+      13,
+      1,
+      14,
+      0,
+      "AUDIO"
     ]
   ],
   "groups": [],

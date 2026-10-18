@@ -1,16 +1,24 @@
 """Documentary nodes: photos -> narrated Ken Burns video.
 
-  Documentary Story (Ollama)   3-10 images, each with an optional note: a vision
-                               model identifies the subject and what it does, a
-                               text model writes the narration in the chosen mood
+  Documentary Photo            Load Image plus an optional name and note per photo
+  Documentary Story (Ollama)   3-10 images (or photos), each with an optional note:
+                               a vision model identifies the subject (unless named)
+                               and what it does, a text model writes the narration
+                               in the chosen mood
   Narrate Storyboard           local text-to-speech, one clip per image: Chatterbox
                                (expressive, voice and emotion from the mood) or Kokoro
+  Documentary Music            instrumental background music for the mood, as long
+                               as the narration (ACE-Step 1.5, ComfyUI's own model code)
   Ken Burns Video              pan/zoom per image for exactly its narration,
-                               rendered on the GPU and streamed to ffmpeg
+                               rendered on the GPU and streamed to ffmpeg; mixes in
+                               the music, lower while the narrator speaks
 
 The nodes pass a DOC_STORYBOARD between them: a dict with "images" (IMAGE
 tensors, [1,H,W,3]), "texts" and, after narration, "audio" (float32 arrays at
-"sample_rate").
+"sample_rate"); after music, "music" ([channels, n] at "music_rate").
+
+Menu "Documentary → Stored files" (web/storage.js) lists the files in ComfyUI's
+output, input and temp folders and deletes the ones you pick.
 """
 import base64
 import io
@@ -18,6 +26,7 @@ import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -30,9 +39,13 @@ from PIL import Image
 
 import comfy.model_management
 import folder_paths
+import nodes
 from comfy_api.latest import InputImpl
 
 STORYBOARD = "DOC_STORYBOARD"
+PHOTO = "DOC_PHOTO"
+# The Story's image inputs take a plain IMAGE (Load Image) or a Documentary Photo.
+IMAGE_IN = f"IMAGE,{PHOTO}"
 MIN_IMAGES = 3
 MAX_IMAGES = 10
 OLLAMA_URL = os.environ.get("DOC_OLLAMA_URL", "http://ollama.ollama.svc.cluster.local:11434")
@@ -54,13 +67,61 @@ def _jpeg_b64(image, max_side=1024):
 
 
 def _collect(kwargs):
-    """(image, note) for each connected image, in input order."""
+    """(image, name, note) for each connected image, in input order. A
+    Documentary Photo brings its own name and note; a plain image has none."""
     out = []
     for i in range(1, MAX_IMAGES + 1):
-        image = kwargs.get(f"image_{i}")
-        if image is not None:
-            out.append((image, str(kwargs.get(f"note_{i}") or "").strip()))
+        item = kwargs.get(f"image_{i}")
+        if item is None:
+            continue
+        name, note = "", str(kwargs.get(f"note_{i}") or "").strip()
+        if isinstance(item, dict):
+            name = item.get("name", "")
+            note = " ".join(x for x in (item.get("note", ""), note) if x)
+            item = item["image"]
+        out.append((item, name, note))
     return out
+
+
+class DocumentaryPhoto:
+    """Load Image plus what you know about the photo: the subject's name (used
+    as true, and to look up its facts) and a note."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        base = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(base) if os.path.isfile(os.path.join(base, f))]
+        return {
+            "required": {
+                "image": (sorted(folder_paths.filter_files_content_types(files, ["image"])), {"image_upload": True}),
+                "name": ("STRING", {"default": "", "placeholder": "Optional: what or who it is (e.g. Eurasian blue tit)",
+                                    "tooltip": "The subject's name. Used as true instead of the vision model's guess, "
+                                               "and to look up its facts"}),
+                "note": ("STRING", {"multiline": True, "default": "",
+                                    "placeholder": "Optional: what is happening, where, when"}),
+            },
+        }
+
+    RETURN_TYPES = (PHOTO, "IMAGE")
+    RETURN_NAMES = ("photo", "image")
+    FUNCTION = "run"
+    CATEGORY = "documentary"
+
+    def run(self, image, name, note):
+        loaded = nodes.LoadImage().load_image(image)[0]
+        name = name.strip()
+        if name.lower() == "image":
+            # Left over from the first template, whose widget values were one off.
+            name = ""
+        return ({"image": loaded, "name": name, "note": note.strip()}, loaded)
+
+    @classmethod
+    def IS_CHANGED(cls, image, **kwargs):
+        return nodes.LoadImage.IS_CHANGED(image)
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, image, **kwargs):
+        return nodes.LoadImage.VALIDATE_INPUTS(image)
 
 
 # Narration moods: what the writer is asked to sound like. "custom" uses only
@@ -194,29 +255,59 @@ def _reference_facts(subject, limit=1200):
         return ""
 
 
-def _ollama_unload(model):
-    # Ollama keeps a model loaded for minutes; a big writer spans both GPUs and
-    # would leave the narration and video steps without memory on GPU 0.
-    body = {"model": model, "keep_alive": 0}
-    req = urllib.request.Request(f"{OLLAMA_URL}/api/generate", data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
+def _ollama_loaded():
+    """Names of the models Ollama has loaded (the router merges both instances)."""
     try:
-        urllib.request.urlopen(req, timeout=60).read()
-    except (urllib.error.URLError, OSError):
-        pass
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/ps", timeout=10) as r:
+            return {m.get("name") for m in json.load(r).get("models", [])}
+    except (urllib.error.URLError, OSError, ValueError):
+        return set()
+
+
+def _ollama_unload(models, timeout=90):
+    """Unload the models and wait until their GPU memory is really free.
+    Ollama keeps models loaded (KEEP_ALIVE -1); a big writer spans both GPUs and
+    would leave the narration and video steps without memory on GPU 0. Ollama
+    answers an unload at once but frees the memory a moment later, so wait for
+    /api/ps to stop listing them, then for GPU 0's free memory to settle."""
+    import time
+
+    models = {m for m in models if m}
+    for model in models:
+        body = {"model": model, "keep_alive": 0}
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/generate", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=60).read()
+        except (urllib.error.URLError, OSError):
+            pass
+    names = models | {m if ":" in m else f"{m}:latest" for m in models}
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and _ollama_loaded() & names:
+        time.sleep(0.5)
+    if not torch.cuda.is_available():
+        return
+    device = comfy.model_management.get_torch_device()
+    last = -1
+    while time.monotonic() < deadline:
+        free = torch.cuda.mem_get_info(device)[0]
+        if free - last < 64 * 1024 ** 2:
+            break
+        last = free
+        time.sleep(1.0)
 
 
 class DocumentaryStory:
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {f"image_{i}": ("IMAGE",) for i in range(MIN_IMAGES + 1, MAX_IMAGES + 1)}
+        optional = {f"image_{i}": (IMAGE_IN,) for i in range(MIN_IMAGES + 1, MAX_IMAGES + 1)}
         for i in range(1, MAX_IMAGES + 1):
             optional[f"note_{i}"] = ("STRING", {
                 "default": "", "placeholder": f"Optional: about image {i} (what or who it is, what is happening)",
                 "tooltip": f"Your description of image {i}; the narration treats it as true"})
         return {
             "required": {
-                **{f"image_{i}": ("IMAGE",) for i in range(1, MIN_IMAGES + 1)},
+                **{f"image_{i}": (IMAGE_IN,) for i in range(1, MIN_IMAGES + 1)},
                 "brief": ("STRING", {"multiline": True, "default": "",
                                      "placeholder": "Optional: what the photos are about (place, season, people, year)"}),
                 "mood": (list(MOODS), {"default": DEFAULT_MOOD,
@@ -248,8 +339,9 @@ class DocumentaryStory:
         n = len(shots)
         if n < MIN_IMAGES:
             raise ValueError(f"Connect at least {MIN_IMAGES} images (connected: {n})")
-        images = [image for image, _ in shots]
-        notes = [note for _, note in shots]
+        images = [image for image, _, _ in shots]
+        names = [name for _, name, _ in shots]
+        notes = [note for _, _, note in shots]
         style = custom_style.strip() or MOODS.get(mood, "")
         if not style:
             raise ValueError("Mood 'custom' needs a custom_style")
@@ -261,31 +353,37 @@ class DocumentaryStory:
         else:
             writer = writer_model.strip() or model
             try:
-                facts, texts, title = self._narrate(images, notes, brief, model, writer, language,
+                facts, texts, title = self._narrate(images, names, notes, brief, model, writer, language,
                                                     words_per_image, temperature, seed, style)
             finally:
-                for m in {model, writer}:
-                    _ollama_unload(m)
+                _ollama_unload({model, writer})
         story = (f"{title}\n\n" if title else "") + "\n\n".join(
             f"[{i + 1}]" + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
             for i, t in enumerate(texts))
-        return ({"images": images, "texts": texts, "title": title, "mood": mood}, story)
+        return ({"images": images, "texts": texts, "title": title, "mood": mood,
+                 "custom_style": custom_style.strip()}, story)
 
-    def _narrate(self, images, notes, brief, vision, writer, language, words, temperature, seed, style):
+    def _narrate(self, images, names, notes, brief, vision, writer, language, words, temperature, seed, style):
         # One look per image: with all images in one request the vision model lost
         # track of which image it was on. All looks first, then all writing: the
         # two models may share a GPU, and alternating would reload one each time.
         facts = []
-        for image, note in zip(images, notes):
+        for image, name, note in zip(images, names, notes):
             comfy.model_management.throw_exception_if_processing_interrupted()
             look = LOOK_PROMPT.format(brief=brief.strip() or "none",
-                                      note=f"The person who took this photograph says about it (treat as true): {note} " if note else "")
+                                      note=(f"The main subject is: {name} (given by the person who took the photograph; "
+                                            f"it is correct, use exactly this as the subject). " if name else "")
+                                      + (f"The person who took this photograph says about it (treat as true): {note} " if note else ""))
             seen = _ollama_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
-            facts.append({k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS})
+            fact = {k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS}
+            if name:
+                fact = {"name": name, **fact, "subject": name}
+            facts.append(fact)
         shots = [{**f, **({"photographer_note": n} if n else {})} for f, n in zip(facts, notes)]
         references = {}
-        for shot in shots:
-            subject = shot.get("photographer_note") or shot["subject"]
+        for shot, name in zip(shots, names):
+            # A given name is the best search term; else a short note, else the vision model's subject.
+            subject = name or shot.get("photographer_note") or shot["subject"]
             if subject not in references:
                 references[subject] = _reference_facts(shot["subject"] if len(subject) > 60 else subject)
             shot["reference"] = references[subject]
@@ -300,6 +398,10 @@ class DocumentaryStory:
             "Real-world facts (numbers, habits, abilities, records) may only come from the 'reference' text given "
             "for a moment; never invent or embellish one, and if there is no reference, use no facts. "
             "Don't label facts ('fun fact'). Use common names, never scientific names. "
+            "When a moment has a 'name' (given by the person who took the photos, always correct), call its subject "
+            "by that name at least once in that moment's narration, early on (e.g. 'the pintail', 'a northern "
+            "wheatear'); never call it just 'the bird', 'the duck' or 'it' without the name. Without a 'name', use "
+            "the most specific name in 'subject'. "
         )
         # Plan first, so the moments add up to one story instead of n captions.
         plan_prompt = (
@@ -325,7 +427,9 @@ class DocumentaryStory:
                 f"\"{plan.get('title', '')}\". {common}"
                 f"The story's premise: {plan.get('premise', '')} "
                 f"This moment's job in the story: {beat} "
-                f"What an observer saw in this moment (the viewer sees it too; don't list it): "
+                + (f"This moment's subject is the {shot['name']}: say '{shot['name']}' in the narration. "
+                   if shot.get("name") else "")
+                + f"What an observer saw in this moment (the viewer sees it too; don't list it): "
                 f"{json.dumps(shot, ensure_ascii=False)}. "
                 f"Write {words} words at most, to be spoken aloud in {language}. "
                 "Vary how sentences start, and never use the phrase 'right now'. "
@@ -554,12 +658,146 @@ def _frame(base, scale, x, y, width, height):
 
 
 def _write_wav(path, samples, rate):
-    pcm = (np.clip(samples, -1, 1) * 32767).astype(np.int16)
+    """samples: [n] (mono) or [channels, n]."""
+    samples = np.atleast_2d(samples)
+    pcm = (np.clip(samples.T, -1, 1) * 32767).astype(np.int16)
     with wave.open(path, "wb") as w:
-        w.setnchannels(1)
+        w.setnchannels(samples.shape[0])
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(pcm.tobytes())
+
+
+# Background music with ACE-Step 1.5 (ComfyUI's own nodes, called in code so
+# the length follows the narration). Settings as in ComfyUI's ACE-Step 1.5
+# template: AuraFlow shift 3, 8 steps, cfg 1, euler/simple.
+ACE_CHECKPOINT = "ace_step_1.5_turbo_aio.safetensors"
+ACE_REPO = "Comfy-Org/ace_step_1.5_ComfyUI_files"
+# Per mood: tags (ACE-Step's style prompt), bpm, key.
+MUSIC = {
+    "documentary (Nat Geo)": ("cinematic orchestral nature documentary score, warm strings, gentle woodwinds, soft piano, "
+                              "harp, curious and full of wonder, light and airy, instrumental", 90, "D major"),
+    "funny": ("playful quirky comedy score, pizzicato strings, bassoon, clarinet, ukulele, glockenspiel, light "
+              "percussion, bouncy and cheeky, instrumental", 112, "F major"),
+    "poetic": ("ambient contemplative score, slow solo piano, soft strings, airy pads, gentle and reflective, "
+               "instrumental", 66, "A minor"),
+    "bedtime story": ("soft lullaby, music box, celesta, harp, warm pads, very gentle, slow and sleepy, instrumental",
+                      60, "C major"),
+    "epic trailer": ("epic cinematic trailer music, full orchestra, taiko drums, deep braams, choir, heroic brass, "
+                     "rising tension building to a huge climax, instrumental", 100, "D minor"),
+    "nostalgic memoir": ("nostalgic warm acoustic guitar and piano, soft strings, bittersweet and gentle, "
+                         "instrumental", 80, "G major"),
+    "sports commentary": ("energetic sports broadcast theme, driving drums, brass stabs, electric guitar, stadium "
+                          "anthem, upbeat and exciting, instrumental", 128, "E major"),
+    "mystery / noir": ("film noir jazz, smoky muted trumpet, upright bass, brushed drums, slow piano, moody and "
+                       "mysterious, instrumental", 72, "C minor"),
+}
+
+
+def _narration_seconds(storyboard, pause=1.6, tail=3.0):
+    """About how long the video will be (narration + Ken Burns' default pauses);
+    Ken Burns Video trims or loops the music to the exact length."""
+    rate = storyboard["sample_rate"]
+    return sum(len(c) / rate + pause for c in storyboard["audio"]) + tail
+
+
+class DocumentaryMusic:
+    @classmethod
+    def INPUT_TYPES(cls):
+        checkpoints = folder_paths.get_filename_list("checkpoints")
+        return {
+            "required": {
+                "storyboard": (STORYBOARD,),
+                "checkpoint": (checkpoints or [ACE_CHECKPOINT], {"default": ACE_CHECKPOINT,
+                                                                 "tooltip": f"ACE-Step 1.5 checkpoint (from {ACE_REPO})"}),
+                "style": ("STRING", {"multiline": True, "default": "",
+                                     "placeholder": "Optional: describe the music (genre, instruments, feel). "
+                                                    "Empty: chosen from the mood"}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
+                "steps": ("INT", {"default": 8, "min": 1, "max": 60, "tooltip": "8 for the turbo model"}),
+            },
+        }
+
+    RETURN_TYPES = (STORYBOARD, "AUDIO")
+    RETURN_NAMES = ("storyboard", "music")
+    FUNCTION = "run"
+    CATEGORY = "documentary"
+
+    def run(self, storyboard, checkpoint, style, seed, steps):
+        from comfy_extras.nodes_ace import EmptyAceStep15LatentAudio, TextEncodeAceStepAudio15
+        from comfy_extras.nodes_audio import VAEDecodeAudio
+        from comfy_extras.nodes_model_advanced import ModelSamplingAuraFlow
+
+        if "audio" not in storyboard:
+            raise ValueError("Connect the storyboard from 'Narrate Storyboard' (the music follows the narration's length)")
+        tags, bpm, key = MUSIC.get(storyboard.get("mood"), MUSIC[DEFAULT_MOOD])
+        if style.strip():
+            tags = style.strip()
+        elif storyboard.get("custom_style"):
+            tags = f"instrumental background score for a narration in this style: {storyboard['custom_style'][:300]}"
+        seconds = round(_narration_seconds(storyboard), 1)
+        model, clip, vae = nodes.CheckpointLoaderSimple().load_checkpoint(checkpoint)[:3]
+        positive = TextEncodeAceStepAudio15.execute(clip, tags, "[Instrumental]", seed, bpm, seconds, "4", "en", key,
+                                                    True, 2.0, 0.85, 0.9, 0, 0.0)[0]
+        negative = nodes.ConditioningZeroOut().zero_out(positive)[0]
+        model = ModelSamplingAuraFlow().patch_aura(model, 3.0)[0]
+        latent = EmptyAceStep15LatentAudio.execute(seconds, 1)[0]
+        samples = nodes.common_ksampler(model, seed, steps, 1.0, "euler", "simple", positive, negative, latent)[0]
+        audio = VAEDecodeAudio.execute(vae, samples)[0]
+        del model, clip, vae, positive, negative, samples
+        # Free GPU 0 for Ken Burns.
+        comfy.model_management.unload_all_models()
+        comfy.model_management.soft_empty_cache()
+        wave_ = audio["waveform"][0].float().cpu().numpy()
+        return ({**storyboard, "music": wave_, "music_rate": audio["sample_rate"]}, audio)
+
+
+def _resample(x, src, dst):
+    if src == dst:
+        return x
+    import librosa
+    return librosa.resample(x, orig_sr=src, target_sr=dst, axis=-1).astype(np.float32)
+
+
+def _fit_music(music, length, rate, crossfade=2.0):
+    """Music ([channels, n]) looped with a crossfade, or trimmed, to length."""
+    out = music
+    cf = min(int(crossfade * rate), music.shape[1] // 4)
+    while out.shape[1] < length:
+        ramp = np.linspace(0, 1, cf, dtype=np.float32)
+        head = out[:, :-cf] if cf else out
+        joint = out[:, -cf:] * (1 - ramp) + music[:, :cf] * ramp if cf else np.zeros((music.shape[0], 0), np.float32)
+        out = np.concatenate([head, joint, music[:, cf:]], axis=1)
+    return out[:, :length]
+
+
+def _mix(narration, rate, speech, music, music_rate, volume, duck):
+    """Narration (mono) over music: music normalised, at `volume`, dipping to
+    volume * duck while the narrator speaks (speech: 0/1 per sample), faded in
+    and out. Returns [2, n] at the music's rate."""
+    out_rate = music_rate
+    voice = _resample(narration, rate, out_rate)
+    n = voice.shape[0]
+    mask = _resample(speech.astype(np.float32), rate, out_rate)[:n]
+    mask = np.pad(mask, (0, n - mask.shape[0]))
+    # Smooth the ducking over ~0.4 s, so the music doesn't jump.
+    width = int(0.4 * out_rate)
+    kernel = np.ones(width, dtype=np.float32) / width
+    mask = np.clip(np.convolve(mask, kernel, mode="same") * 1.5, 0, 1)
+    if music.shape[0] == 1:
+        music = np.repeat(music, 2, axis=0)
+    music = _fit_music(music[:2], n, out_rate)
+    rms = float(np.sqrt(np.mean(music ** 2))) or 1.0
+    music = music / rms * 0.12
+    gain = volume * (1 - (1 - duck) * mask)
+    fade_in, fade_out = min(int(1.0 * out_rate), n), min(int(2.5 * out_rate), n)
+    gain[:fade_in] *= np.linspace(0, 1, fade_in, dtype=np.float32)
+    gain[n - fade_out:] *= np.linspace(1, 0, fade_out, dtype=np.float32)
+    mixed = voice[None, :] + music * gain[None, :]
+    peak = float(np.abs(mixed).max())
+    if peak > 0.98:
+        mixed *= 0.98 / peak
+    return mixed.astype(np.float32), out_rate
 
 
 class KenBurnsVideo:
@@ -580,6 +818,12 @@ class KenBurnsVideo:
                 "fade": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.1,
                                    "tooltip": "Fade through black between images (seconds)"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
+                # New inputs go last, so saved workflows keep their widget values.
+                "music_volume": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 2.0, "step": 0.05,
+                                           "tooltip": "Background music level between narrations (needs Documentary "
+                                                      "Music in front; 0 = no music)"}),
+                "music_duck": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.05,
+                                         "tooltip": "Music level while the narrator speaks, as a share of music_volume"}),
             },
         }
 
@@ -588,7 +832,8 @@ class KenBurnsVideo:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, storyboard, width, height, fps, zoom, motion, pause_before, pause_after, fade, seed):
+    def run(self, storyboard, width, height, fps, zoom, motion, pause_before, pause_after, fade, seed,
+            music_volume=0.4, music_duck=0.3):
         if "audio" not in storyboard:
             raise ValueError("Connect the storyboard from 'Narrate Storyboard' (it has no narration yet)")
         rate = storyboard["sample_rate"]
@@ -597,15 +842,22 @@ class KenBurnsVideo:
 
         # Each segment lasts its narration plus the pauses, rounded to whole
         # frames; the audio is padded to exactly the same length, so they stay in sync.
-        segments, audio = [], []
+        segments, audio, speech = [], [], []
         for clip in storyboard["audio"]:
             frames = math.ceil((pause_before + len(clip) / rate + pause_after) * fps)
             total = round(frames / fps * rate)
             lead = round(pause_before * rate)
             seg = np.zeros(total, dtype=np.float32)
             seg[lead:lead + len(clip)] = clip[:total - lead]
+            spoken = np.zeros(total, dtype=np.uint8)
+            spoken[lead:lead + len(clip)] = 1
             segments.append(frames)
             audio.append(seg)
+            speech.append(spoken)
+        sound, sound_rate = np.concatenate(audio), rate
+        if storyboard.get("music") is not None and music_volume > 0:
+            sound, sound_rate = _mix(sound, rate, np.concatenate(speech), storyboard["music"],
+                                     storyboard["music_rate"], music_volume, music_duck)
 
         out_dir = folder_paths.get_temp_directory()
         os.makedirs(out_dir, exist_ok=True)
@@ -613,7 +865,7 @@ class KenBurnsVideo:
         os.close(fd)
         with tempfile.TemporaryDirectory(dir=out_dir) as tmp:
             wav = os.path.join(tmp, "narration.wav")
-            _write_wav(wav, np.concatenate(audio), rate)
+            _write_wav(wav, sound, sound_rate)
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
                    "-i", wav,
@@ -648,13 +900,94 @@ class KenBurnsVideo:
         return (InputImpl.VideoFromFile(video_path),)
 
 
+# Stored files: listed and deleted from the "Documentary → Stored files" menu
+# entry (web/storage.js). Only inside ComfyUI's output, input and temp folders.
+STORAGE_FOLDERS = {
+    "output": folder_paths.get_output_directory,
+    "input": folder_paths.get_input_directory,
+    "temp": folder_paths.get_temp_directory,
+}
+
+
+def _storage_list():
+    files = []
+    for folder, base_of in STORAGE_FOLDERS.items():
+        base = base_of()
+        for root, dirs, names in os.walk(base):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for name in names:
+                if name.startswith("."):
+                    continue
+                full = os.path.join(root, name)
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                rel = os.path.relpath(full, base).replace(os.sep, "/")
+                files.append({"folder": folder, "path": rel, "size": st.st_size, "mtime": st.st_mtime})
+    files.sort(key=lambda f: f["mtime"], reverse=True)
+    usage = shutil.disk_usage(folder_paths.get_output_directory())
+    return {"files": files, "disk": {"total": usage.total, "free": usage.free}}
+
+
+def _storage_delete(items):
+    deleted, freed, errors = 0, 0, []
+    for item in items:
+        folder, rel = item.get("folder"), str(item.get("path", ""))
+        if folder not in STORAGE_FOLDERS or not rel:
+            errors.append(f"{folder}/{rel}: not allowed")
+            continue
+        base = os.path.realpath(STORAGE_FOLDERS[folder]())
+        full = os.path.realpath(os.path.join(base, rel))
+        if not full.startswith(base + os.sep) or not os.path.isfile(full):
+            errors.append(f"{folder}/{rel}: not a file in {folder}")
+            continue
+        try:
+            size = os.path.getsize(full)
+            os.remove(full)
+            deleted, freed = deleted + 1, freed + size
+        except OSError as e:
+            errors.append(f"{folder}/{rel}: {e.strerror}")
+            continue
+        # Remove subfolders left empty (e.g. output/video), never the folder itself.
+        parent = os.path.dirname(full)
+        while parent != base and parent.startswith(base + os.sep):
+            try:
+                os.rmdir(parent)
+            except OSError:
+                break
+            parent = os.path.dirname(parent)
+    return {"deleted": deleted, "freed": freed, "errors": errors}
+
+
+try:
+    from aiohttp import web
+    from server import PromptServer
+
+    @PromptServer.instance.routes.get("/documentary/storage")
+    async def _storage_get(request):
+        return web.json_response(_storage_list())
+
+    @PromptServer.instance.routes.post("/documentary/storage/delete")
+    async def _storage_post(request):
+        body = await request.json()
+        return web.json_response(_storage_delete(body.get("files", [])))
+except (ImportError, AttributeError):
+    pass  # not running inside ComfyUI's server
+
+WEB_DIRECTORY = "./web"
+
 NODE_CLASS_MAPPINGS = {
+    "DocumentaryPhoto": DocumentaryPhoto,
     "DocumentaryStory": DocumentaryStory,
     "DocumentaryNarrate": NarrateStoryboard,
+    "DocumentaryMusic": DocumentaryMusic,
     "DocumentaryKenBurnsVideo": KenBurnsVideo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "DocumentaryPhoto": "Documentary Photo",
     "DocumentaryStory": "Documentary Story (Ollama)",
     "DocumentaryNarrate": "Narrate Storyboard",
+    "DocumentaryMusic": "Documentary Music (ACE-Step 1.5)",
     "DocumentaryKenBurnsVideo": "Ken Burns Video",
 }
