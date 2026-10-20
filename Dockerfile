@@ -25,9 +25,10 @@ ENV PIP_NO_CACHE_DIR=1 \
 
 # git: the Manager clones custom nodes. ffmpeg, libgl1, libglib2.0-0: what
 # common custom nodes need at runtime (video nodes, OpenCV). build-essential:
-# for node requirements without a prebuilt wheel.
+# for node requirements without a prebuilt wheel. fonts-dejavu-core: the
+# documentary nodes draw titles, subtitles and thumbnails with DejaVu.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 build-essential \
+ && apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 build-essential fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch "$COMFYUI_VERSION" https://github.com/comfyanonymous/ComfyUI.git /app \

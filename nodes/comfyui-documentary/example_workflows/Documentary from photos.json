@@ -1,550 +1,1053 @@
 {
-  "last_node_id": 14,
-  "last_link_id": 12,
-  "nodes": [
+ "last_node_id": 23,
+ "last_link_id": 21,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    0,
+    0
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
     {
-      "id": 1,
-      "type": "DocumentaryPhoto",
-      "pos": [
-        0,
-        0
-      ],
-      "size": [
-        300,
-        420
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "title": "Image 1",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "photo",
-          "type": "DOC_PHOTO",
-          "links": [
-            1
-          ]
-        },
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryPhoto"
-      },
-      "widgets_values": [
-        "file_1.jpg",
-        "",
-        ""
-      ]
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      1
+     ]
     },
     {
-      "id": 2,
-      "type": "DocumentaryPhoto",
-      "pos": [
-        0,
-        440
-      ],
-      "size": [
-        300,
-        420
-      ],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "title": "Image 2",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "photo",
-          "type": "DOC_PHOTO",
-          "links": [
-            2
-          ]
-        },
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryPhoto"
-      },
-      "widgets_values": [
-        "file_2.jpg",
-        "",
-        ""
-      ]
-    },
-    {
-      "id": 3,
-      "type": "DocumentaryPhoto",
-      "pos": [
-        0,
-        880
-      ],
-      "size": [
-        300,
-        420
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "title": "Image 3",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "photo",
-          "type": "DOC_PHOTO",
-          "links": [
-            3
-          ]
-        },
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryPhoto"
-      },
-      "widgets_values": [
-        "file_3.jpg",
-        "",
-        ""
-      ]
-    },
-    {
-      "id": 6,
-      "type": "DocumentaryStory",
-      "pos": [
-        380,
-        0
-      ],
-      "size": [
-        460,
-        1100
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "image_1",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": 1
-        },
-        {
-          "name": "image_2",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": 2
-        },
-        {
-          "name": "image_3",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": 3
-        },
-        {
-          "name": "image_4",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_5",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_6",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_7",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_8",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_9",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        },
-        {
-          "name": "image_10",
-          "type": "IMAGE,DOC_PHOTO",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "links": [
-            6
-          ]
-        },
-        {
-          "name": "story",
-          "type": "STRING",
-          "links": [
-            7
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryStory"
-      }
-    },
-    {
-      "id": 7,
-      "type": "PreviewAny",
-      "pos": [
-        860,
-        320
-      ],
-      "size": [
-        340,
-        560
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "title": "Story (read it here)",
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 7
-        }
-      ],
-      "outputs": [
-        {
-          "name": "STRING",
-          "type": "STRING",
-          "links": []
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "PreviewAny"
-      }
-    },
-    {
-      "id": 8,
-      "type": "DocumentaryNarrate",
-      "pos": [
-        860,
-        0
-      ],
-      "size": [
-        320,
-        130
-      ],
-      "flags": {},
-      "order": 7,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "link": 6
-        }
-      ],
-      "outputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "links": [
-            8
-          ]
-        },
-        {
-          "name": "narration",
-          "type": "AUDIO",
-          "links": [
-            9
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryNarrate"
-      }
-    },
-    {
-      "id": 9,
-      "type": "PreviewAudio",
-      "pos": [
-        860,
-        180
-      ],
-      "size": [
-        320,
-        100
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "title": "Listen to the narration",
-      "inputs": [
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "link": 9
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewAudio"
-      }
-    },
-    {
-      "id": 10,
-      "type": "DocumentaryKenBurnsVideo",
-      "pos": [
-        1620,
-        0
-      ],
-      "size": [
-        340,
-        330
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "link": 11
-        }
-      ],
-      "outputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "links": [
-            10
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryKenBurnsVideo"
-      }
-    },
-    {
-      "id": 11,
-      "type": "SaveVideo",
-      "pos": [
-        2020,
-        0
-      ],
-      "size": [
-        560,
-        420
-      ],
-      "flags": {},
-      "order": 10,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "link": 10
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveVideo"
-      }
-    },
-    {
-      "id": 12,
-      "type": "Note",
-      "pos": [
-        0,
-        1330
-      ],
-      "size": [
-        300,
-        330
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "properties": {},
-      "widgets_values": [
-        "3 to 10 photos.\n\nUpload a photo into each Documentary Photo node (file_1, file_2, file_3 are placeholders). name: optional, what or who it is (e.g. 'Eurasian blue tit'); used as true and to look up its facts. note: optional, what is happening.\n\nMore photos: copy a Documentary Photo node (Ctrl+C, Ctrl+V) and connect it to image_4, image_5 ... image_10 on Documentary Story. A plain Load Image works too.\n\nmood: the tone of the narration, the voice and the music. custom_style: your own tone, used instead of the mood.\n\nMusic: Documentary Music writes instrumental music for the mood, as long as the narration (style: your own description). Ken Burns Video mixes it in: music_volume 0 = no music.\n\nStored files: menu Documentary \u2192 Stored files."
-      ]
-    },
-    {
-      "id": 13,
-      "type": "DocumentaryMusic",
-      "pos": [
-        1240,
-        0
-      ],
-      "size": [
-        340,
-        250
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "link": 8
-        }
-      ],
-      "outputs": [
-        {
-          "name": "storyboard",
-          "type": "DOC_STORYBOARD",
-          "links": [
-            11
-          ]
-        },
-        {
-          "name": "music",
-          "type": "AUDIO",
-          "links": [
-            12
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "DocumentaryMusic"
-      }
-    },
-    {
-      "id": 14,
-      "type": "PreviewAudio",
-      "pos": [
-        1240,
-        300
-      ],
-      "size": [
-        340,
-        100
-      ],
-      "flags": {},
-      "order": 10,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "link": 12
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewAudio"
-      }
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
     }
-  ],
-  "links": [
-    [
-      1,
-      1,
-      0,
-      6,
-      0,
-      "DOC_PHOTO"
-    ],
-    [
-      2,
-      2,
-      0,
-      6,
-      1,
-      "DOC_PHOTO"
-    ],
-    [
-      3,
-      3,
-      0,
-      6,
-      2,
-      "DOC_PHOTO"
-    ],
-    [
-      6,
-      6,
-      0,
-      8,
-      0,
-      "DOC_STORYBOARD"
-    ],
-    [
-      7,
-      6,
-      1,
-      7,
-      0,
-      "*"
-    ],
-    [
-      8,
-      8,
-      0,
-      13,
-      0,
-      "DOC_STORYBOARD"
-    ],
-    [
-      9,
-      8,
-      1,
-      9,
-      0,
-      "AUDIO"
-    ],
-    [
-      10,
-      10,
-      0,
-      11,
-      0,
-      "VIDEO"
-    ],
-    [
-      11,
-      13,
-      0,
-      10,
-      0,
-      "DOC_STORYBOARD"
-    ],
-    [
-      12,
-      13,
-      1,
-      14,
-      0,
-      "AUDIO"
-    ]
-  ],
-  "groups": [],
-  "config": {},
-  "extra": {
-    "ds": {
-      "scale": 0.65,
-      "offset": [
-        40,
-        40
-      ]
-    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 1",
+   "widgets_values": [
+    "file_1.jpg",
+    "",
+    ""
+   ]
   },
-  "version": 0.4
+  {
+   "id": 2,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    320,
+    0
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      2
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 2",
+   "widgets_values": [
+    "file_2.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 3,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    0,
+    440
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      3
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 3",
+   "widgets_values": [
+    "file_3.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 4,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    320,
+    440
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      4
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 4",
+   "widgets_values": [
+    "file_4.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 5,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    0,
+    880
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      5
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 5",
+   "widgets_values": [
+    "file_5.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 6,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    320,
+    880
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      6
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 6",
+   "widgets_values": [
+    "file_6.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 7,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    0,
+    1320
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      7
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 7",
+   "widgets_values": [
+    "file_7.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 8,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    320,
+    1320
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      8
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 8",
+   "widgets_values": [
+    "file_8.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 9,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    0,
+    1760
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      9
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 9",
+   "widgets_values": [
+    "file_9.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 10,
+   "type": "DocumentaryPhoto",
+   "pos": [
+    320,
+    1760
+   ],
+   "size": [
+    300,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "photo",
+     "type": "DOC_PHOTO",
+     "links": [
+      10
+     ]
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryPhoto"
+   },
+   "title": "Photo 10",
+   "widgets_values": [
+    "file_10.jpg",
+    "",
+    ""
+   ]
+  },
+  {
+   "id": 11,
+   "type": "DocumentaryStory",
+   "pos": [
+    660,
+    0
+   ],
+   "size": [
+    460,
+    1100
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image_1",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 1
+    },
+    {
+     "name": "image_2",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 2
+    },
+    {
+     "name": "image_3",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 3
+    },
+    {
+     "name": "image_4",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 4
+    },
+    {
+     "name": "image_5",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 5
+    },
+    {
+     "name": "image_6",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 6
+    },
+    {
+     "name": "image_7",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 7
+    },
+    {
+     "name": "image_8",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 8
+    },
+    {
+     "name": "image_9",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 9
+    },
+    {
+     "name": "image_10",
+     "type": "IMAGE,DOC_PHOTO",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "links": [
+      11,
+      13,
+      14
+     ]
+    },
+    {
+     "name": "story",
+     "type": "STRING",
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryStory"
+   }
+  },
+  {
+   "id": 12,
+   "type": "PreviewAny",
+   "pos": [
+    660,
+    1140
+   ],
+   "size": [
+    460,
+    560
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "source",
+     "type": "*",
+     "link": 12
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "title": "Story (read it here)"
+  },
+  {
+   "id": 13,
+   "type": "DocumentaryNarrate",
+   "pos": [
+    1180,
+    0
+   ],
+   "size": [
+    340,
+    200
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "links": [
+      15
+     ]
+    },
+    {
+     "name": "narration",
+     "type": "AUDIO",
+     "links": [
+      16
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryNarrate"
+   }
+  },
+  {
+   "id": 14,
+   "type": "PreviewAudio",
+   "pos": [
+    1180,
+    240
+   ],
+   "size": [
+    340,
+    100
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 16
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "PreviewAudio"
+   },
+   "title": "Narration"
+  },
+  {
+   "id": 15,
+   "type": "DocumentaryMusic",
+   "pos": [
+    1560,
+    0
+   ],
+   "size": [
+    340,
+    250
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "link": 15
+    }
+   ],
+   "outputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "links": [
+      17
+     ]
+    },
+    {
+     "name": "music",
+     "type": "AUDIO",
+     "links": [
+      18
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryMusic"
+   }
+  },
+  {
+   "id": 16,
+   "type": "PreviewAudio",
+   "pos": [
+    1560,
+    290
+   ],
+   "size": [
+    340,
+    100
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 18
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "PreviewAudio"
+   },
+   "title": "Music"
+  },
+  {
+   "id": 17,
+   "type": "DocumentaryKenBurnsVideo",
+   "pos": [
+    1940,
+    0
+   ],
+   "size": [
+    360,
+    620
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "link": 17
+    }
+   ],
+   "outputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "links": [
+      19
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryKenBurnsVideo"
+   }
+  },
+  {
+   "id": 18,
+   "type": "SaveVideo",
+   "pos": [
+    2340,
+    0
+   ],
+   "size": [
+    560,
+    420
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "link": 19
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "title": "Video",
+   "widgets_values": [
+    "documentary/video",
+    "auto",
+    "auto"
+   ]
+  },
+  {
+   "id": 19,
+   "type": "DocumentarySocialPost",
+   "pos": [
+    1180,
+    460
+   ],
+   "size": [
+    340,
+    300
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "link": 13
+    }
+   ],
+   "outputs": [
+    {
+     "name": "post",
+     "type": "STRING",
+     "links": [
+      20
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentarySocialPost"
+   }
+  },
+  {
+   "id": 20,
+   "type": "PreviewAny",
+   "pos": [
+    1180,
+    800
+   ],
+   "size": [
+    720,
+    620
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "source",
+     "type": "*",
+     "link": 20
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "title": "Post (copy from here)"
+  },
+  {
+   "id": 21,
+   "type": "DocumentaryThumbnail",
+   "pos": [
+    1940,
+    660
+   ],
+   "size": [
+    360,
+    240
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "storyboard",
+     "type": "DOC_STORYBOARD",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "thumbnail",
+     "type": "IMAGE",
+     "links": [
+      21
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DocumentaryThumbnail"
+   }
+  },
+  {
+   "id": 22,
+   "type": "SaveImage",
+   "pos": [
+    2340,
+    460
+   ],
+   "size": [
+    560,
+    400
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 21
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "title": "Thumbnail",
+   "widgets_values": [
+    "documentary/thumbnail"
+   ]
+  },
+  {
+   "id": 23,
+   "type": "Note",
+   "pos": [
+    0,
+    2220
+   ],
+   "size": [
+    620,
+    480
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {},
+   "widgets_values": [
+    "target (on Documentary Story): YouTube video (16:9) or Instagram reel (9:16, about 30 s, at most 40; 4-6 photos work best).\n\n3 to 10 photos. Upload a photo into each Photo node (file_1 ... file_10 are placeholders). Fewer photos: delete any Photo nodes you don't need (keep at least 3).\n\nname: optional, what or who it is (e.g. 'Eurasian blue tit'); used as true and to look up its facts. note: optional, what is happening.\n\nmood: the tone of the narration, the voice, the music and the intro label. custom_style: your own tone.\n\nThe video: an intro collage with the story's title, the photos with transitions (transition: mix or one kind; fade: their length) and subtitles, and a follow card at the end. Put your @handle in Ken Burns Video (handle) and in Social Post. The narrator's last line is written by the story; Narrate Storyboard's outro replaces it ('-' = none).\n\nSocial Post: for a reel an Instagram caption, 5 hashtags, key phrases and alt text; for YouTube a title, description, tags and 3 hashtags. In the box below it.\nThumbnail: the sharpest, most colourful photo with the story's hook (photo: pick one; headline: your own text).\n\nStored files: menu Documentary → Stored files."
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   11,
+   0,
+   "DOC_PHOTO"
+  ],
+  [
+   2,
+   2,
+   0,
+   11,
+   1,
+   "DOC_PHOTO"
+  ],
+  [
+   3,
+   3,
+   0,
+   11,
+   2,
+   "DOC_PHOTO"
+  ],
+  [
+   4,
+   4,
+   0,
+   11,
+   3,
+   "DOC_PHOTO"
+  ],
+  [
+   5,
+   5,
+   0,
+   11,
+   4,
+   "DOC_PHOTO"
+  ],
+  [
+   6,
+   6,
+   0,
+   11,
+   5,
+   "DOC_PHOTO"
+  ],
+  [
+   7,
+   7,
+   0,
+   11,
+   6,
+   "DOC_PHOTO"
+  ],
+  [
+   8,
+   8,
+   0,
+   11,
+   7,
+   "DOC_PHOTO"
+  ],
+  [
+   9,
+   9,
+   0,
+   11,
+   8,
+   "DOC_PHOTO"
+  ],
+  [
+   10,
+   10,
+   0,
+   11,
+   9,
+   "DOC_PHOTO"
+  ],
+  [
+   11,
+   11,
+   0,
+   13,
+   0,
+   "DOC_STORYBOARD"
+  ],
+  [
+   12,
+   11,
+   1,
+   12,
+   0,
+   "*"
+  ],
+  [
+   13,
+   11,
+   0,
+   19,
+   0,
+   "DOC_STORYBOARD"
+  ],
+  [
+   14,
+   11,
+   0,
+   21,
+   0,
+   "DOC_STORYBOARD"
+  ],
+  [
+   15,
+   13,
+   0,
+   15,
+   0,
+   "DOC_STORYBOARD"
+  ],
+  [
+   16,
+   13,
+   1,
+   14,
+   0,
+   "AUDIO"
+  ],
+  [
+   17,
+   15,
+   0,
+   17,
+   0,
+   "DOC_STORYBOARD"
+  ],
+  [
+   18,
+   15,
+   1,
+   16,
+   0,
+   "AUDIO"
+  ],
+  [
+   19,
+   17,
+   0,
+   18,
+   0,
+   "VIDEO"
+  ],
+  [
+   20,
+   19,
+   0,
+   20,
+   0,
+   "*"
+  ],
+  [
+   21,
+   21,
+   0,
+   22,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 0.55,
+   "offset": [
+    40,
+    40
+   ]
+  }
+ },
+ "version": 0.4
 }

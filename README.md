@@ -18,8 +18,11 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
 - Our own nodes live in `nodes/` and come with the image; the entrypoint
   links them into `/data/custom_nodes`. `comfyui-documentary`: photos →
   per photo, a vision model on Ollama names the subject and a text model
-  writes the narration → Kokoro text-to-speech → Ken Burns
-  video (template "Documentary from photos" in ComfyUI's template browser).
+  writes the narration → Chatterbox or Kokoro text-to-speech → music → video
+  with an intro collage, transitions, subtitles and a follow card, plus a
+  thumbnail and a social post (caption, hashtags, key phrases), for a
+  YouTube video (16:9) or an Instagram reel (9:16, at most 40 s). Template
+  "Documentary from photos" in ComfyUI's template browser.
 - The Manager runs with `use_uv = False` (set by the entrypoint): uv ignores
   the image's packages and would reinstall them into the venv.
 - ComfyUI has no authentication, and anyone who can reach it can install
