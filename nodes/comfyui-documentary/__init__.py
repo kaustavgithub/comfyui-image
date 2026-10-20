@@ -563,6 +563,10 @@ class NarrateStoryboard:
                                      "placeholder": "Optional: the narrator's last line. Empty: the story's own follow request; '-': none",
                                      "tooltip": "Spoken over the follow card at the end of the video"}),
             },
+            "optional": {
+                "my_voice": ("AUDIO", {"tooltip": "Optional: 10-20 s of you reading, from a Load Audio node. The "
+                                                  "narration is spoken in that voice (Chatterbox; English works best)"}),
+            },
         }
 
     RETURN_TYPES = (STORYBOARD, "AUDIO")
@@ -570,7 +574,7 @@ class NarrateStoryboard:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, storyboard, voice, speed, engine="kokoro", intensity=0.0, outro=""):
+    def run(self, storyboard, voice, speed, engine="kokoro", intensity=0.0, outro="", my_voice=None):
         preset = {**VOICE_PRESETS[DEFAULT_MOOD], **VOICE_PRESETS.get(storyboard.get("mood"), {})}
         if voice != AUTO_VOICE:
             preset["voice"] = voice
@@ -583,6 +587,13 @@ class NarrateStoryboard:
         texts = storyboard["texts"] + ([line] if line else [])
         _free_gpu0()
         device = comfy.model_management.get_torch_device()
+        if my_voice is not None:
+            # Only Chatterbox can copy a voice. No pitch shift: it should sound like you.
+            if engine == "kokoro":
+                print("[documentary] my_voice is connected: using Chatterbox instead of Kokoro")
+            preset["reference"] = _own_voice(my_voice)
+            preset["semitones"] = 0
+            engine = "chatterbox"
         if engine == "kokoro":
             clips, timings = _kokoro_clips(texts, preset["voice"], preset["kokoro_speed"] * speed, device)
         else:
@@ -686,6 +697,24 @@ def _reference_clip(voice, device):
     return path
 
 
+def _own_voice(audio, seconds=20.0):
+    """A voice recording (ComfyUI AUDIO) as a mono WAV for Chatterbox: at most
+    `seconds` long, silence at the ends trimmed, level normalised."""
+    import librosa
+
+    rate = int(audio["sample_rate"])
+    wav = audio["waveform"][0].float().mean(0).cpu().numpy()
+    wav, _ = librosa.effects.trim(wav, top_db=35)
+    if len(wav) < rate * 5:
+        raise ValueError(f"my_voice is {len(wav) / rate:.1f} s long; record 10-20 s of speech")
+    wav = wav[:int(rate * seconds)]
+    wav = wav / (float(np.abs(wav).max()) or 1.0) * 0.9
+    path = os.path.join(folder_paths.get_temp_directory(), "documentary_my_voice.wav")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _write_wav(path, wav, rate)
+    return path
+
+
 def _sentences(text, limit=300):
     """Chunks of whole sentences up to ~limit characters: Chatterbox stops after
     about 40 s of speech per call."""
@@ -708,7 +737,7 @@ def _chatterbox_clips(texts, preset, speed, device):
 
     model = _chatterbox_model(device)
     try:
-        reference = _reference_clip(preset["voice"], device)
+        reference = preset.get("reference") or _reference_clip(preset["voice"], device)
         stretch = preset["stretch"] * speed
         clips, timings = [], []
         for text in texts:
