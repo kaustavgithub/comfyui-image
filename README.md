@@ -22,7 +22,7 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
   writes the narration → Chatterbox or Kokoro text-to-speech → music → video
   with an intro collage, transitions, subtitles and a follow card, plus a
   thumbnail and a social post (caption, hashtags, key phrases), for a
-  YouTube video (16:9) or an Instagram reel (9:16, at most 60 s). Template
+  YouTube video (16:9) or an Instagram reel (9:16, at most 90 s). Template
   "Documentary from photos" in ComfyUI's template browser.
 - Species: BioCLIP 2 (open_clip, `species.py`) names a bird's or mammal's
   species when it is sure, among the world's birds and mammals (GBIF; no

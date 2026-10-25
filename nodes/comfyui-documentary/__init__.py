@@ -232,14 +232,13 @@ MOOD_LABELS = {
 # Spoken at the end when the story has no closing line of its own.
 DEFAULT_OUTRO = "If you enjoyed this story, follow for more."
 
-# Where the video goes. A reel is 9:16 and at most 60 s long: the story writes
+# Where the video goes. A reel is 9:16 and at most 90 s long: the story writes
 # fewer words, Narrate speeds up a narration that is still too long, and Ken
 # Burns Video uses short intro, pauses, transitions and follow card.
 TARGETS = ["YouTube video", "Instagram reel"]
 REEL = "Instagram reel"
 REEL_SIZE = (1080, 1920)
-REEL_SECONDS = 28.0  # what the story's word count aims at without max_seconds
-REEL_MAX = 60.0
+REEL_MAX = 90.0  # also what the story's word count aims at without max_seconds
 REEL_INTRO, REEL_OUTRO, REEL_PAUSES, REEL_FADE = 2.5, 3.0, (0.25, 0.45), 0.5
 WORDS_PER_SECOND = 2.1  # how fast the narrators speak, measured
 # A reel's budget: Chatterbox spoke a reel at about 3.3 words a second
@@ -252,9 +251,9 @@ def _is_reel(storyboard):
 
 
 def _reel_words(n, limit=0.0):
-    """Words per photo for a reel with n photos: a few seconds under `limit`,
-    or about REEL_SECONDS without one."""
-    aim = min(limit, REEL_MAX) - 3.0 if limit > 0 else REEL_SECONDS
+    """Words per photo for a reel with n photos: a few seconds under `limit`
+    (REEL_MAX without one); at most 40, so a few photos make a shorter reel."""
+    aim = (min(limit, REEL_MAX) if limit > 0 else REEL_MAX) - 3.0
     speech = aim - REEL_INTRO - (REEL_OUTRO + 0.5) - n * sum(REEL_PAUSES)
     return max(5, min(40, int(speech * REEL_WORDS_PER_SECOND / n)))
 
@@ -462,11 +461,11 @@ class DocumentaryStory:
                                                   "placeholder": "Optional: your own narration, one paragraph per image, separated by blank lines. Skips the models."}),
                 "target": (TARGETS, {"default": TARGETS[0],
                                      "tooltip": "YouTube video: 16:9, words_per_image as set. Instagram reel: 9:16, "
-                                                "about 30 s (or max_seconds), at most 60 (words per image set to fit; 4-6 photos work best)"}),
+                                                "up to 90 s (or max_seconds; words per image set to fit, at most 40; 4-6 photos work best)"}),
                 "max_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1800.0, "step": 5.0,
                                           "tooltip": "The longest the video may be; fewer words per image, and Narrate "
                                                      "speeds up a narration that still runs over. 0 = no limit "
-                                                     "(a reel: 60 s)"}),
+                                                     "(a reel: 90 s)"}),
                 "camera_details": (CAMERA_DETAILS, {"default": CAMERA_DETAILS[0],
                                                     "tooltip": "The photos' camera details as a small line on "
                                                                "their slides: where they fit the story, on every "
@@ -686,7 +685,7 @@ class DocumentaryStory:
         beats += [""] * (n - len(beats))
         opening = str(plan.get("opening", "")).strip().strip('"')
         print(f"[documentary] opening: {opening!r}")
-        texts = []
+        texts, named = [], set()
         for index, (shot, beat) in enumerate(zip(shots, beats)):
             comfy.model_management.throw_exception_if_processing_interrupted()
             prompt = (
@@ -696,8 +695,11 @@ class DocumentaryStory:
                 f"This moment's job in the story: {beat} "
                 + (f"This is the first moment: start its narration with exactly this line, then go on: "
                    f"{json.dumps(opening, ensure_ascii=False)}. " if index == 0 and opening else "")
-                + (f"This moment's subject is the {shot['name']}: say '{shot['name']}' in the narration. "
-                   if shot.get("name") else "")
+                + ((f"This moment's subject is the {shot['name']}: say '{shot['name']}' in the narration. "
+                    if shot["name"] not in named else
+                    f"This moment's subject is the same {shot['name']} the story has already named: don't say "
+                    "its name again; call it 'it' or a short word for what it is ('the bird', 'the fox'), and spend the words on "
+                    "the story. ") if shot.get("name") else "")
                 + (f"Nobody knows this animal's species: call it only {json.dumps(shot.get('subject', ''))} or "
                    "a word like it, never by a species name. " if known[index]["animal"] else "")
                 + f"What an observer saw in this moment (the viewer sees it too; don't list it): "
@@ -739,6 +741,7 @@ class DocumentaryStory:
                 if invented:
                     text = _drop_sentences_with(text, invented)
             texts.append(text)
+            named.add(shot.get("name"))
         extra = {k: str(plan.get(k, "")).strip().strip('"') for k in ("hook", "outro")}
         # The writer sometimes leaves out the request itself.
         if language.strip().lower() == "english" and "follow" not in extra["outro"].lower():
@@ -1329,7 +1332,7 @@ def _balanced(text, font, max_width):
     """Like _wrap, but with lines of similar length (no lone last word)."""
     lines = _wrap(text, font, max_width)
     width = max_width
-    while len(lines) > 1:
+    while 1 < len(lines) < len(text.split()):  # every word on its own line: can't get narrower
         narrower = _wrap(text, font, width * 0.95)
         if len(narrower) > len(lines):
             break
