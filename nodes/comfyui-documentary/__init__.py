@@ -1,7 +1,7 @@
 """Documentary nodes: photos -> narrated Ken Burns video.
 
   Documentary Photo            Load Image plus an optional name and note per photo
-  Documentary Story (Ollama)   3-10 images (or photos), each with an optional note:
+  Documentary Story            3-10 images (or photos), each with an optional note:
                                a vision model identifies the subject (unless named)
                                and what it does, a text model writes the narration
                                in the chosen mood
@@ -14,13 +14,14 @@
                                narration, transitions, subtitles and a follow card
                                at the end, rendered on the GPU and streamed to
                                ffmpeg; mixes in the music, lower while the narrator speaks
-  Social Post (Ollama)         for the target: an Instagram caption with five hashtags,
+  Social Post                  for the target: an Instagram caption with five hashtags,
                                or a YouTube title, description, tags and three
                                hashtags; plus SEO key phrases
   Documentary Thumbnail        a cover image: the best photo with the story's headline
 
 The nodes pass a DOC_STORYBOARD between them: a dict with "images" (IMAGE
-tensors, [1,H,W,3]), "texts", "title", "hook", "outro" and, after narration,
+tensors, [1,H,W,3]), "texts", "title", "hook", "outro", "details" (per image
+the camera line to show on its slide, or ""), "max_seconds" and, after narration,
 "audio" (float32 arrays at "sample_rate"), "timings" (per clip: (text, start,
 end) in samples, for subtitles) and "outro_audio"; after music, "music"
 ([channels, n] at "music_rate").
@@ -56,9 +57,11 @@ PHOTO = "DOC_PHOTO"
 IMAGE_IN = f"IMAGE,{PHOTO}"
 MIN_IMAGES = 3
 MAX_IMAGES = 10
-OLLAMA_URL = os.environ.get("DOC_OLLAMA_URL", "http://ollama.ollama.svc.cluster.local:11434")
-# The Ollama instance that shares GPU 0 with ComfyUI (the other one has GPU 1 only).
-OLLAMA_GPU0_URL = os.environ.get("DOC_OLLAMA_GPU0_URL", "http://ollama-both.ollama.svc.cluster.local:11434")
+# The LLM gate (homelab apps/llm): OpenAI-compatible API in front of llama-swap,
+# which starts each model on its own GPUs. DOC_LLM_TOKEN is an admin token, so
+# these nodes may switch models (the gate refuses that to normal users).
+LLM_URL = os.environ.get("DOC_LLM_URL", "http://llm.llm.svc.cluster.local:8080").rstrip("/")
+LLM_TOKEN = os.environ.get("DOC_LLM_TOKEN", "")
 
 # Kokoro-82M (Apache-2.0). Weights download once into the models volume.
 KOKORO_REPO = "hexgrad/Kokoro-82M"
@@ -77,19 +80,20 @@ def _jpeg_b64(image, max_side=1024):
 
 
 def _collect(kwargs):
-    """(image, name, note) for each connected image, in input order. A
-    Documentary Photo brings its own name and note; a plain image has none."""
+    """(image, name, note, details) for each connected image, in input order. A
+    Documentary Photo brings its own name, note and camera details; a plain
+    image has none."""
     out = []
     for i in range(1, MAX_IMAGES + 1):
         item = kwargs.get(f"image_{i}")
         if item is None:
             continue
-        name, note = "", str(kwargs.get(f"note_{i}") or "").strip()
+        name, details, note = "", "", str(kwargs.get(f"note_{i}") or "").strip()
         if isinstance(item, dict):
-            name = item.get("name", "")
+            name, details = item.get("name", ""), item.get("details", "")
             note = " ".join(x for x in (item.get("note", ""), note) if x)
             item = item["image"]
-        out.append((item, name, note))
+        out.append((item, name, note, details))
     return out
 
 
@@ -109,6 +113,10 @@ class DocumentaryPhoto:
                                                "and to look up its facts"}),
                 "note": ("STRING", {"multiline": True, "default": "",
                                     "placeholder": "Optional: what is happening, where, when"}),
+                # New inputs go last, so saved workflows keep their widget values.
+                "details": ("STRING", {"default": "",
+                                       "placeholder": "Optional: camera settings (e.g. Nikon Z6 · 500 mm · f/5.6 · 1/2000 s · ISO 800)",
+                                       "tooltip": "Shown small on the photo's slide when the story says it fits"}),
             },
         }
 
@@ -117,13 +125,13 @@ class DocumentaryPhoto:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, image, name, note):
+    def run(self, image, name, note, details=""):
         loaded = nodes.LoadImage().load_image(image)[0]
         name = name.strip()
         if name.lower() == "image":
             # Left over from the first template, whose widget values were one off.
             name = ""
-        return ({"image": loaded, "name": name, "note": note.strip()}, loaded)
+        return ({"image": loaded, "name": name, "note": note.strip(), "details": details.strip()}, loaded)
 
     @classmethod
     def IS_CHANGED(cls, image, **kwargs):
@@ -183,6 +191,10 @@ MOODS = {
     "custom": "",
 }
 DEFAULT_MOOD = "documentary (Nat Geo)"
+# Not a mood of its own: the writer picks one of MOODS from what the vision model saw.
+AUTO_MOOD = "auto (from photos)"
+# Camera details (Documentary Photo's "details") on the slides.
+CAMERA_DETAILS = ["auto (the writer decides)", "always", "never"]
 # The small line under the title in the intro, and on the thumbnail.
 MOOD_LABELS = {
     "documentary (Nat Geo)": "A wildlife story",
@@ -213,10 +225,33 @@ def _is_reel(storyboard):
     return storyboard.get("target") == REEL
 
 
-def _reel_words(n):
-    """Words per photo for a reel of about REEL_SECONDS with n photos."""
-    speech = REEL_SECONDS - REEL_INTRO - (REEL_OUTRO + 0.5) - n * sum(REEL_PAUSES)
+def _reel_words(n, limit=REEL_MAX):
+    """Words per photo for a reel of about REEL_SECONDS (or less, under a
+    shorter limit) with n photos."""
+    aim = min(REEL_SECONDS, limit - 3.0)
+    speech = aim - REEL_INTRO - (REEL_OUTRO + 0.5) - n * sum(REEL_PAUSES)
     return max(5, min(30, int(speech * WORDS_PER_SECOND / n)))
+
+
+# A YouTube video's timing with Ken Burns Video's defaults: intro, pause before
+# and after each narration, follow card (at least the closing line + tail).
+VIDEO_INTRO, VIDEO_PAUSES, VIDEO_OUTRO, VIDEO_TAIL = 4.5, (0.6, 1.0), 5.0, 1.6
+
+
+def _video_words(n, limit, words, outro_words=20):
+    """Words per photo so a YouTube video with n photos stays under `limit`
+    seconds (at most `words`), with a few seconds to spare."""
+    closing = outro_words / WORDS_PER_SECOND + VIDEO_TAIL
+    speech = limit - 5.0 - VIDEO_INTRO - max(VIDEO_OUTRO, closing) - n * sum(VIDEO_PAUSES)
+    return max(10, min(words, int(speech * WORDS_PER_SECOND / n)))
+
+
+def _limit(storyboard):
+    """The longest the video may be, in seconds (0: no limit)."""
+    limit = float(storyboard.get("max_seconds") or 0)
+    if _is_reel(storyboard):
+        return min(limit, REEL_MAX) if limit > 0 else REEL_MAX
+    return limit
 
 # How each mood sounds in Narrate Storyboard. voice: a Kokoro voice (Chatterbox
 # copies it from a reference clip); intensity, cfg: Chatterbox's exaggeration
@@ -254,23 +289,40 @@ LOOK_SCHEMA = {
 }
 
 
-def _ollama_json(model, content, schema, temperature, seed, images=None):
-    message = {"role": "user", "content": content}
+def _llm_request(path, body=None, timeout=900):
+    headers = {"Content-Type": "application/json"}
+    if LLM_TOKEN:
+        headers["Authorization"] = f"Bearer {LLM_TOKEN}"
+    req = urllib.request.Request(f"{LLM_URL}{path}", data=json.dumps(body).encode() if body is not None else None,
+                                 headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def _llm_json(model, content, schema, temperature, seed, images=None, tries=3, max_tokens=3000):
+    """The model's answer as JSON (constrained to the schema). A model can get
+    stuck repeating itself (seen with qwen2.5vl): the answer is cut at
+    max_tokens, and a broken answer is asked again with another seed."""
+    parts = content
     if images:
-        message["images"] = images
-    body = {"model": model, "stream": False, "format": schema, "think": False,
-            "options": {"temperature": temperature, "seed": seed}, "messages": [message]}
-    req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=600) as r:
-            reply = json.load(r)["message"]["content"]
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Ollama ({OLLAMA_URL}, {model}) said {e.code}: {e.read().decode(errors='replace')[:500]}")
-    try:
-        return json.loads(reply)
-    except json.JSONDecodeError:
-        raise RuntimeError(f"{model} did not answer with JSON; run again or change the seed. Reply: {reply[:500]}")
+        parts = [{"type": "text", "text": content}] + [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}} for b64 in images]
+    reply = ""
+    for attempt in range(tries):
+        body = {"model": model, "messages": [{"role": "user", "content": parts}],
+                "temperature": temperature, "seed": seed + 1000 * attempt, "max_tokens": max_tokens,
+                "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
+                "chat_template_kwargs": {"enable_thinking": False}}
+        try:
+            reply = _llm_request("/v1/chat/completions", body)["choices"][0]["message"].get("content") or ""
+        except urllib.error.HTTPError as e:
+            error = e.read().decode(errors="replace")[:500]
+            raise RuntimeError(f"LLM ({LLM_URL}, {model}) said {e.code}: {error}")
+        try:
+            return json.loads(reply)
+        except json.JSONDecodeError:
+            print(f"[documentary] {model}: no valid JSON (try {attempt + 1} of {tries}): {reply[:200]!r}")
+    raise RuntimeError(f"{model} did not answer with JSON; run again or change the seed. Reply: {reply[:500]}")
 
 
 def _reference_facts(subject, limit=1200):
@@ -299,55 +351,32 @@ def _reference_facts(subject, limit=1200):
         return ""
 
 
-def _ollama_loaded(url=OLLAMA_URL):
-    """Names of the models Ollama has loaded (the router merges both instances)."""
-    try:
-        with urllib.request.urlopen(f"{url}/api/ps", timeout=10) as r:
-            return {m.get("name") for m in json.load(r).get("models", [])}
-    except (urllib.error.URLError, OSError, ValueError):
-        return set()
-
-
-def _ollama_unload(models, timeout=90, url=OLLAMA_URL):
-    """Unload the models and wait until their GPU memory is really free.
-    Ollama keeps models loaded (KEEP_ALIVE -1); a big writer spans both GPUs and
-    would leave the narration and video steps without memory on GPU 0. Ollama
-    answers an unload at once but frees the memory a moment later, so wait for
-    /api/ps to stop listing them, then for GPU 0's free memory to settle."""
+def _free_gpu(timeout=90):
+    """Unload the LLMs on ComfyUI's GPU (e.g. a chat model from Open WebUI, or
+    this run's own writer), so the next step has the GPU; they reload on their
+    next use. Then wait for the GPU's free memory to settle (a model's memory
+    is released a moment after it stops)."""
     import time
 
-    models = {m for m in models if m}
-    for model in models:
-        body = {"model": model, "keep_alive": 0}
-        req = urllib.request.Request(f"{url}/api/generate", data=json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json"})
-        try:
-            urllib.request.urlopen(req, timeout=60).read()
-        except (urllib.error.URLError, OSError):
-            pass
-    names = models | {m if ":" in m else f"{m}:latest" for m in models}
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and _ollama_loaded(url) & names:
-        time.sleep(0.5)
     if not torch.cuda.is_available():
         return
     device = comfy.model_management.get_torch_device()
-    last = -1
+    # Indexes match the gate's: ComfyUI runs with CUDA_DEVICE_ORDER=PCI_BUS_ID.
+    gpu = device.index if device.index is not None else torch.cuda.current_device()
+    try:
+        done = _llm_request(f"/gate/unload?gpu={gpu}", {}, timeout=timeout).get("unloaded", [])
+        if done:
+            print(f"[documentary] unloaded from GPU {gpu}: {', '.join(done)}")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"[documentary] could not free GPU {gpu} ({e}); going on")
+        return
+    deadline, last = time.monotonic() + timeout, -1
     while time.monotonic() < deadline:
         free = torch.cuda.mem_get_info(device)[0]
         if free - last < 64 * 1024 ** 2:
             break
         last = free
         time.sleep(1.0)
-
-
-def _free_gpu0():
-    """Unload whatever Ollama keeps on GPU 0 (e.g. a chat model from Open WebUI,
-    loaded with no expiry), so this run has the GPU. It reloads on its next use."""
-    models = _ollama_loaded(OLLAMA_GPU0_URL)
-    if models:
-        print(f"[documentary] unloading from GPU 0: {', '.join(sorted(models))}")
-        _ollama_unload(models, url=OLLAMA_GPU0_URL)
 
 
 class DocumentaryStory:
@@ -363,8 +392,9 @@ class DocumentaryStory:
             "required": {
                 "brief": ("STRING", {"multiline": True, "default": "",
                                      "placeholder": "Optional: what the photos are about (place, season, people, year)"}),
-                "mood": (list(MOODS), {"default": DEFAULT_MOOD,
-                                       "tooltip": "How the narration sounds; 'custom' uses custom_style"}),
+                "mood": (list(MOODS) + [AUTO_MOOD], {"default": DEFAULT_MOOD,
+                                                     "tooltip": "How the narration sounds; 'custom' uses custom_style; "
+                                                                "'auto': the writer picks one that fits the photos"}),
                 "custom_style": ("STRING", {"multiline": True, "default": "",
                                             "placeholder": "Optional: describe your own tone (e.g. 'a pirate captain telling tall tales'). When filled, used instead of the mood."}),
                 "model": ("STRING", {"default": "qwen2.5vl:7b",
@@ -380,6 +410,14 @@ class DocumentaryStory:
                 "target": (TARGETS, {"default": TARGETS[0],
                                      "tooltip": "YouTube video: 16:9, words_per_image as set. Instagram reel: 9:16, "
                                                 "about 30 s, at most 40 (words per image set to fit; 4-6 photos work best)"}),
+                "max_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1800.0, "step": 5.0,
+                                          "tooltip": "The longest the video may be; fewer words per image, and Narrate "
+                                                     "speeds up a narration that still runs over. 0 = no limit "
+                                                     "(a reel: 40 s)"}),
+                "camera_details": (CAMERA_DETAILS, {"default": CAMERA_DETAILS[0],
+                                                    "tooltip": "The photos' camera details as a small line on "
+                                                               "their slides: where they fit the story, on every "
+                                                               "slide that has them, or never"}),
             },
             "optional": optional,
         }
@@ -390,45 +428,56 @@ class DocumentaryStory:
     CATEGORY = "documentary"
 
     def run(self, brief, mood, custom_style, model, writer_model, language, words_per_image, temperature, seed,
-            narration_override, target=TARGETS[0], **kwargs):
+            narration_override, target=TARGETS[0], max_seconds=0.0, camera_details=CAMERA_DETAILS[0], **kwargs):
         shots = _collect(kwargs)
         n = len(shots)
         if n < MIN_IMAGES:
             raise ValueError(f"Connect at least {MIN_IMAGES} images (connected: {n})")
-        images = [image for image, _, _ in shots]
-        names = [name for _, name, _ in shots]
-        notes = [note for _, _, note in shots]
-        style = custom_style.strip() or MOODS.get(mood, "")
-        if not style:
+        images = [image for image, _, _, _ in shots]
+        names = [name for _, name, _, _ in shots]
+        notes = [note for _, _, note, _ in shots]
+        details = [d for _, _, _, d in shots]
+        auto = mood == AUTO_MOOD and not custom_style.strip()
+        if auto and narration_override.strip():
+            mood, auto = DEFAULT_MOOD, False  # nothing to pick from without the models
+        style = None if auto else custom_style.strip() or MOODS.get(mood, "")
+        if style == "":
             raise ValueError("Mood 'custom' needs a custom_style")
         title, facts, extra = "", [], {}
         reel = target == REEL
+        limit = _limit({"target": target, "max_seconds": max_seconds})
         if reel:
-            words_per_image = _reel_words(n)
+            words_per_image = _reel_words(n, limit)
+        elif limit > 0:
+            words_per_image = _video_words(n, limit, words_per_image)
         if narration_override.strip():
             texts = [p.strip() for p in narration_override.strip().split("\n\n") if p.strip()]
             if len(texts) != n:
                 raise ValueError(f"narration_override has {len(texts)} paragraphs, but {n} images are connected")
         else:
             writer = writer_model.strip() or model
-            _free_gpu0()
-            try:
-                facts, texts, title, extra = self._narrate(images, names, notes, brief, model, writer, language,
-                                                           words_per_image, temperature, seed, style,
-                                                           10 if reel else 20)
-            finally:
-                _ollama_unload({model, writer})
+            # The models stay loaded for Social Post; Narrate, Music and Video free the GPU.
+            facts, texts, title, extra = self._narrate(images, names, notes,
+                                                       details if camera_details == CAMERA_DETAILS[0] else [""] * n,
+                                                       brief, model, writer, language, words_per_image,
+                                                       temperature, seed, style, 10 if reel else 20)
+            mood = extra.get("mood") or mood
+        # Camera details: on the slides the writer chose (all of them without the writer), or as set.
+        shown = {"always": [True] * n, "never": [False] * n}.get(camera_details) or extra.get("show_details") \
+            or [True] * n
+        details = [d if d and show else "" for d, show in zip(details, shown)]
         hook, outro = extra.get("hook", ""), extra.get("outro", "")
-        story = (f"{title}\n\n" if title else "") + (f"Thumbnail: {hook}\n\n" if hook else "") + "\n\n".join(
+        story = (f"{title}\n\n" if title else "") + (f"Mood: {mood}\n\n" if auto else "") + (
+            f"Thumbnail: {hook}\n\n" if hook else "") + "\n\n".join(
             f"[{i + 1}]" + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
             for i, t in enumerate(texts)) + (f"\n\n[end] {outro}" if outro else "")
         subjects = [f["subject"] for f in facts] if facts else [x for x in names if x]
         return ({"images": images, "texts": texts, "title": title, "hook": hook, "outro": outro, "mood": mood,
                  "custom_style": custom_style.strip(), "brief": brief.strip(), "subjects": subjects,
-                 "language": language, "target": target}, story)
+                 "language": language, "target": target, "max_seconds": limit, "details": details}, story)
 
-    def _narrate(self, images, names, notes, brief, vision, writer, language, words, temperature, seed, style,
-                 outro_words=20):
+    def _narrate(self, images, names, notes, details, brief, vision, writer, language, words, temperature, seed,
+                 style, outro_words=20):
         # One look per image: with all images in one request the vision model lost
         # track of which image it was on. All looks first, then all writing: the
         # two models may share a GPU, and alternating would reload one each time.
@@ -439,12 +488,14 @@ class DocumentaryStory:
                                       note=(f"The main subject is: {name} (given by the person who took the photograph; "
                                             f"it is correct, use exactly this as the subject). " if name else "")
                                       + (f"The person who took this photograph says about it (treat as true): {note} " if note else ""))
-            seen = _ollama_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
+            seen = _llm_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
             fact = {k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS}
             if name:
                 fact = {"name": name, **fact, "subject": name}
             facts.append(fact)
         shots = [{**f, **({"photographer_note": n} if n else {})} for f, n in zip(facts, notes)]
+        # Camera details only go into the plan (to decide where they show), not into the writing.
+        cameras = [{**shot, "camera": d} if d else shot for shot, d in zip(shots, details)]
         references = {}
         for shot, name in zip(shots, names):
             # A given name is the best search term; else a short note, else the vision model's subject.
@@ -453,6 +504,10 @@ class DocumentaryStory:
                 references[subject] = _reference_facts(shot["subject"] if len(subject) > 60 else subject)
             shot["reference"] = references[subject]
         n = len(images)
+        mood = None
+        if style is None:
+            mood = self._pick_mood(shots, brief, writer, seed)
+            style = MOODS[mood]
         common = (
             f"Tone and approach: {style} "
             + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
@@ -469,9 +524,10 @@ class DocumentaryStory:
             "the most specific name in 'subject'. "
         )
         # Plan first, so the moments add up to one story instead of n captions.
+        has_camera = any(details)
         plan_prompt = (
             f"You are writing a narrated slideshow of {n} moments, in {language}. {common}"
-            f"What an observer saw in each moment, in order: {json.dumps(shots, ensure_ascii=False)}. "
+            f"What an observer saw in each moment, in order: {json.dumps(cameras, ensure_ascii=False)}. "
             f"Plan the narration as one story in this tone: a title, a one-sentence premise, and exactly {n} beats, "
             "one per moment in order, each saying what that moment's narration does for the story "
             "(not what the picture shows). "
@@ -479,15 +535,24 @@ class DocumentaryStory:
             f"hashtags), and an 'outro': one short closing line to be spoken at the very end, under {outro_words} words, in the "
             "same tone, that asks the viewer to follow for more stories like this; it must say 'follow' (in the "
             "story's language), and no names, handles or hashtags. "
-            'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "hook": "...", '
-            '"outro": "..."}'
+            + ("Some moments have 'camera': the settings the photo was taken with. They can be shown as a small "
+               "line of text on that moment's slide (never spoken). Say for each moment, in order, whether showing "
+               "them fits this story and tone ('show_details': true or false; false when a moment has no "
+               "'camera'): yes in a documentary, a nature film or a photographer's memoir, where the craft is "
+               "part of the story (then on most moments that have them), no where it would break the spell "
+               "(a bedtime story, a joke, a noir mystery). "
+               if has_camera else "")
+            + 'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "hook": "...", '
+            '"outro": "..."' + (', "show_details": [true, ...]' if has_camera else "") + "}"
         )
-        plan = _ollama_json(writer, plan_prompt, {
-            "type": "object",
-            "properties": {"title": {"type": "string"}, "premise": {"type": "string"},
-                           "beats": {"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n},
-                           "hook": {"type": "string"}, "outro": {"type": "string"}},
-            "required": ["title", "premise", "beats", "hook", "outro"]}, temperature, seed)
+        properties = {"title": {"type": "string"}, "premise": {"type": "string"},
+                      "beats": {"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n},
+                      "hook": {"type": "string"}, "outro": {"type": "string"}}
+        if has_camera:
+            properties["show_details"] = {"type": "array", "items": {"type": "boolean"}, "minItems": n,
+                                          "maxItems": n}
+        plan = _llm_json(writer, plan_prompt, {"type": "object", "properties": properties,
+                                                  "required": list(properties)}, temperature, seed)
         beats = [str(b).strip() for b in plan.get("beats", [])]
         beats += [""] * (n - len(beats))
         texts = []
@@ -508,7 +573,7 @@ class DocumentaryStory:
                    f"their phrases, images or jokes: {json.dumps(texts, ensure_ascii=False)}. " if texts else "")
                 + 'Answer only with JSON: {"narration": "..."}'
             )
-            reply = _ollama_json(writer, prompt, {"type": "object", "properties": {"narration": {"type": "string"}},
+            reply = _llm_json(writer, prompt, {"type": "object", "properties": {"narration": {"type": "string"}},
                                                   "required": ["narration"]}, temperature, seed + index + 1)
             text = str(reply.get("narration", "")).strip()
             if not text:
@@ -518,7 +583,38 @@ class DocumentaryStory:
         # The writer sometimes leaves out the request itself.
         if language.strip().lower() == "english" and "follow" not in extra["outro"].lower():
             extra["outro"] = f"{extra['outro']} Follow for more stories like this.".strip()
+        if has_camera:
+            shown = [bool(x) for x in plan.get("show_details", [])][:n]
+            extra["show_details"] = shown + [False] * (n - len(shown))
+            print(f"[documentary] camera details on slides: "
+                  f"{[i + 1 for i, s in enumerate(extra['show_details']) if s and details[i]] or 'none'}")
+        if mood:
+            extra["mood"] = mood
         return facts, texts, str(plan.get("title", "")).strip(), extra
+
+    @staticmethod
+    def _pick_mood(shots, brief, writer, seed):
+        """The mood (a key of MOODS) that fits what the vision model saw."""
+        moods = {k: v for k, v in MOODS.items() if v}
+        seen = [{k: s[k] for k in ("subject", "activity", "setting", "others", "photographer_note") if s.get(k)}
+                for s in shots]
+        prompt = (
+            "You choose the tone for a short narrated slideshow of these photos. "
+            f"What an observer saw in each photo, in order: {json.dumps(seen, ensure_ascii=False)}. "
+            + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
+            + f"The tones to choose from: {json.dumps(moods, ensure_ascii=False)}. "
+            "Pick the one tone that suits these photos best: what they show (wildlife, landscapes, people, "
+            "a city, action, quiet moments), their feeling, and what would make the most watchable story; "
+            "not always the first one. "
+            'Answer only with JSON: {"mood": "<one of the tone names>", "why": "..."}'
+        )
+        reply = _llm_json(writer, prompt, {"type": "object",
+                                              "properties": {"mood": {"type": "string", "enum": list(moods)},
+                                                             "why": {"type": "string"}},
+                                              "required": ["mood", "why"]}, 0.5, seed)
+        mood = reply.get("mood") if reply.get("mood") in moods else DEFAULT_MOOD
+        print(f"[documentary] mood: {mood} ({str(reply.get('why', '')).strip()[:200]})")
+        return mood
 
 
 _kokoro = {}
@@ -585,7 +681,7 @@ class NarrateStoryboard:
             line = ""
         n = len(storyboard["texts"])
         texts = storyboard["texts"] + ([line] if line else [])
-        _free_gpu0()
+        _free_gpu()
         device = comfy.model_management.get_torch_device()
         if my_voice is not None:
             # Only Chatterbox can copy a voice. No pitch shift: it should sound like you.
@@ -598,8 +694,8 @@ class NarrateStoryboard:
             clips, timings = _kokoro_clips(texts, preset["voice"], preset["kokoro_speed"] * speed, device)
         else:
             clips, timings = _chatterbox_clips(texts, preset, speed, device)
-        if _is_reel(storyboard):
-            clips, timings = _fit_reel(clips, timings, n)
+        if _limit(storyboard) > 0:
+            clips, timings = _fit_length(storyboard, clips, timings, n)
         full = np.concatenate(clips)
         audio = {"waveform": torch.from_numpy(full)[None, None, :], "sample_rate": KOKORO_RATE}
         return ({**storyboard, "audio": clips[:n], "timings": timings[:n], "sample_rate": KOKORO_RATE,
@@ -613,19 +709,27 @@ def _reel_seconds(photo_seconds, closing_seconds, n):
     return REEL_INTRO + photo_seconds + n * sum(REEL_PAUSES) + closing
 
 
-def _fit_reel(clips, timings, n, limit=REEL_MAX - 0.5, most=1.25):
-    """Speed the narration up (at most `most` times) when the reel would run
-    over the limit; the writer was asked for fewer words, but can overrun."""
+def _video_seconds(photo_seconds, closing_seconds, n):
+    """How long a YouTube video will be (Ken Burns Video's default timing)."""
+    closing = max(VIDEO_OUTRO, closing_seconds + VIDEO_TAIL) if closing_seconds else VIDEO_OUTRO
+    return VIDEO_INTRO + photo_seconds + n * sum(VIDEO_PAUSES) + closing
+
+
+def _fit_length(storyboard, clips, timings, n, most=1.25):
+    """Speed the narration up (at most `most` times) when the video would run
+    over its limit; the writer was asked for fewer words, but can overrun."""
     import librosa
 
+    reel = _is_reel(storyboard)
+    limit = _limit(storyboard) - 0.5
     photos = sum(len(c) for c in clips[:n]) / KOKORO_RATE
     closing = len(clips[n]) / KOKORO_RATE if len(clips) > n else 0.0
-    excess = _reel_seconds(photos, closing, n) - limit
+    excess = (_reel_seconds if reel else _video_seconds)(photos, closing, n) - limit
     if excess <= 0:
         return clips, timings
     speech = photos + closing
     rate = min(speech / max(speech - excess, 1e-3), most)
-    print(f"[documentary] reel {excess:.1f} s too long: narration {rate:.2f}x faster")
+    print(f"[documentary] {'reel' if reel else 'video'} {excess:.1f} s too long: narration {rate:.2f}x faster")
     fast, spans = [], []
     for clip, timing in zip(clips, timings):
         out = librosa.effects.time_stretch(clip, rate=rate).astype(np.float32)
@@ -916,7 +1020,7 @@ class DocumentaryMusic:
         elif storyboard.get("custom_style"):
             tags = f"instrumental background score for a narration in this style: {storyboard['custom_style'][:300]}"
         seconds = round(_narration_seconds(storyboard), 1)
-        _free_gpu0()
+        _free_gpu()
         model, clip, vae = nodes.CheckpointLoaderSimple().load_checkpoint(checkpoint)[:3]
         positive = TextEncodeAceStepAudio15.execute(clip, tags, "[Instrumental]", seed, bpm, seconds, "4", "en", key,
                                                     True, 2.0, 0.85, 0.9, 0, 0.0)[0]
@@ -1244,25 +1348,46 @@ class _Transitions:
 class _PhotoScene:
     """One photo, panned and zoomed over the time it is on screen."""
 
-    def __init__(self, image, index, motion, zoom, rng, width, height, device, tall=False):
+    def __init__(self, image, index, motion, zoom, rng, width, height, device, tall=False, details=""):
         self.image, self.zoom, self.size, self.device, self.tall = image, zoom, (width, height), device, tall
         self.moves = _motion(index, motion, zoom, rng)
         self.base = None
+        self.details, self.details_layer = details, None
 
     def frame(self, u, t):
+        width, height = self.size
         if self.base is None:
             if self.tall:
                 # A little above the middle, so the subtitles fit under the photo.
-                self.base = _framed(self.image, *self.size, self.zoom, self.device, centre=0.44)
+                self.base = _framed(self.image, width, height, self.zoom, self.device, centre=0.44)
             else:
-                self.base = _cover(self.image, *self.size, self.zoom, self.device)
+                self.base = _cover(self.image, width, height, self.zoom, self.device)
+            if self.details:
+                unit = min(width, height)
+                font, lines = _fit(self.details, "regular", unit * (0.03 if self.tall else 0.024),
+                                   width * (0.86 if self.tall else 0.6), 2)
+                self.details_layer = _text_layer(lines, font, self.device, fill=(235, 235, 235),
+                                                 shadow=max(2, round(unit * 0.003)),
+                                                 align="center" if self.tall else "left")
         # Partly linear, so the picture still moves during the transitions.
         u = 0.55 * u + 0.45 * _ease(u)
         (s0, x0, y0), (s1, x1, y1) = self.moves
-        return _frame(self.base, s0 + (s1 - s0) * u, x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, *self.size)
+        frame = _frame(self.base, s0 + (s1 - s0) * u, x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, width, height)
+        if self.details_layer is not None:
+            # The camera details, small: top left in a video, above the photo in a
+            # reel (under Instagram's top bar); they fade in after the cut.
+            layer = self.details_layer
+            if self.tall:
+                cx, cy = width / 2, height * 0.115
+            else:
+                margin = min(width, height) * 0.04
+                cx, cy = margin + layer.shape[2] / 2, margin + layer.shape[1] / 2
+            frame = _paste(frame.contiguous(), layer, cx, cy, 0.9 * _ramp(t, 0.5, 0.6))
+        return frame
 
     def release(self):
         self.base = None
+        self.details_layer = None
 
 
 class _IntroScene:
@@ -1461,31 +1586,34 @@ class KenBurnsVideo:
             raise ValueError("Connect the storyboard from 'Narrate Storyboard' (it has no narration yet)")
         rate = storyboard["sample_rate"]
         rng = random.Random(seed)
-        _free_gpu0()
+        _free_gpu()
         device = comfy.model_management.get_torch_device()
         images = storyboard["images"]
         title = storyboard.get("title", "")
         reel = _is_reel(storyboard)
         closing = storyboard.get("outro_audio")
         if reel:
-            # 9:16, short intro, pauses, transitions and follow card; the pauses
-            # squeezed if the reel would still run over REEL_MAX.
+            # 9:16, short intro, pauses, transitions and follow card.
             width, height = REEL_SIZE
             intro_seconds = min(intro_seconds, REEL_INTRO)
             outro_seconds = min(outro_seconds, REEL_OUTRO)
             pause_before, pause_after = REEL_PAUSES
             fade = min(fade, REEL_FADE)
+        limit = _limit(storyboard)
+        if limit > 0:
+            # The pauses squeezed if the video would still run over its limit.
             n = len(storyboard["audio"])
             spoken_s = sum(len(c) for c in storyboard["audio"]) / rate
             closing_s = len(closing) / rate if closing is not None else 0.0
+            tail = 1.1 if reel else 1.6
             length = (intro_seconds + spoken_s + n * (pause_before + pause_after)
-                      + (max(outro_seconds, closing_s + 1.1) if outro_seconds > 0 else 0))
-            if length > REEL_MAX:
-                squeeze = min(length - REEL_MAX + 0.3, n * (pause_before + pause_after - 0.3))
+                      + (max(outro_seconds, closing_s + tail) if outro_seconds > 0 else 0))
+            if length > limit:
+                squeeze = min(length - limit + 0.3, n * max(pause_before + pause_after - 0.3, 0))
                 pause_before, pause_after = (pause_before - squeeze / n * 0.4, pause_after - squeeze / n * 0.6)
-                if length - squeeze > REEL_MAX:
-                    print(f"[documentary] the reel is {length - squeeze:.0f} s: fewer photos or words would "
-                          f"bring it under {REEL_MAX:.0f} s")
+                if length - squeeze > limit:
+                    print(f"[documentary] the video is {length - squeeze:.0f} s: fewer photos or words would "
+                          f"bring it under {limit:.0f} s")
 
         # The timeline: scenes of whole frames, each with its audio padded to
         # exactly the same length, so picture and sound stay in sync.
@@ -1510,11 +1638,12 @@ class KenBurnsVideo:
             add(_IntroScene(images, title, MOOD_LABELS.get(storyboard.get("mood"), ""), width, height,
                             intro_seconds, rng, device), round(intro_seconds * fps))
         timings = storyboard.get("timings") or [None] * len(storyboard["audio"])
-        for index, (image, clip, timing, text) in enumerate(zip(images, storyboard["audio"], timings,
-                                                               storyboard["texts"])):
+        details = storyboard.get("details") or [""] * len(images)
+        for index, (image, clip, timing, text, detail) in enumerate(zip(images, storyboard["audio"], timings,
+                                                                       storyboard["texts"], details)):
             frames = math.ceil((pause_before + len(clip) / rate + pause_after) * fps)
-            add(_PhotoScene(image, index, motion, zoom, rng, width, height, device, tall=reel), frames, clip,
-                pause_before, timing, text)
+            add(_PhotoScene(image, index, motion, zoom, rng, width, height, device, tall=reel, details=detail),
+                frames, clip, pause_before, timing, text)
         if outro_seconds > 0:
             tail = 1.1 if reel else 1.6
             seconds = max(outro_seconds, len(closing) / rate + tail if closing is not None else 0)
@@ -1771,13 +1900,10 @@ class DocumentarySocialPost:
             "properties": {**{k: {"type": "string"} for k in fields}, **lists},
             "required": [*fields, *lists],
         }
-        try:
-            for attempt in range(3):
-                post = _ollama_json(writer_model.strip(), prompt, schema, temperature, seed + attempt)
-                if len(str(post.get("body", "")).split()) >= 25:
-                    break
-        finally:
-            _ollama_unload({writer_model.strip()})
+        for attempt in range(3):
+            post = _llm_json(writer_model.strip(), prompt, schema, temperature, seed + attempt)
+            if len(str(post.get("body", "")).split()) >= 25:
+                break
         tags = []
         for tag in post.get("hashtags", []):
             tag = re.sub(r"[^\w]", "", str(tag), flags=re.UNICODE)
@@ -1892,10 +2018,10 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DocumentaryPhoto": "Documentary Photo",
-    "DocumentaryStory": "Documentary Story (Ollama)",
+    "DocumentaryStory": "Documentary Story",
     "DocumentaryNarrate": "Narrate Storyboard",
     "DocumentaryMusic": "Documentary Music (ACE-Step 1.5)",
     "DocumentaryKenBurnsVideo": "Ken Burns Video",
-    "DocumentarySocialPost": "Social Post (Ollama)",
+    "DocumentarySocialPost": "Social Post",
     "DocumentaryThumbnail": "Documentary Thumbnail",
 }

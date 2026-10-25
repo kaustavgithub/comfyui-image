@@ -17,7 +17,8 @@ for an NVIDIA GPU node (driver from the host, CUDA 13.0 PyTorch in the image).
   bumping the `Dockerfile`, not from the Manager.
 - Our own nodes live in `nodes/` and come with the image; the entrypoint
   links them into `/data/custom_nodes`. `comfyui-documentary`: photos →
-  per photo, a vision model on Ollama names the subject and a text model
+  per photo, a vision model names the subject and a text model (both through
+  the homelab's LLM gate, OpenAI API: `DOC_LLM_URL`, `DOC_LLM_TOKEN`)
   writes the narration → Chatterbox or Kokoro text-to-speech → music → video
   with an intro collage, transitions, subtitles and a follow card, plus a
   thumbnail and a social post (caption, hashtags, key phrases), for a
