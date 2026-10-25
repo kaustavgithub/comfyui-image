@@ -715,11 +715,24 @@ def _video_seconds(photo_seconds, closing_seconds, n):
     return VIDEO_INTRO + photo_seconds + n * sum(VIDEO_PAUSES) + closing
 
 
+def _tempo(clip, rate):
+    """The clip `rate` times faster (< 1: slower) at the same pitch, with
+    ffmpeg's atempo: it keeps a voice natural, where librosa's phase vocoder
+    makes it sound hollow and metallic."""
+    if abs(rate - 1.0) < 1e-3:
+        return clip
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "f32le", "-ar", str(KOKORO_RATE), "-ac", "1",
+         "-i", "pipe:0", "-filter:a", f"atempo={rate:.4f}", "-f", "f32le", "pipe:1"],
+        input=np.ascontiguousarray(clip, dtype=np.float32).tobytes(), capture_output=True)
+    if proc.returncode:
+        raise RuntimeError(f"ffmpeg atempo failed: {proc.stderr.decode(errors='replace')[-500:]}")
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+
+
 def _fit_length(storyboard, clips, timings, n, most=1.25):
     """Speed the narration up (at most `most` times) when the video would run
     over its limit; the writer was asked for fewer words, but can overrun."""
-    import librosa
-
     reel = _is_reel(storyboard)
     limit = _limit(storyboard) - 0.5
     photos = sum(len(c) for c in clips[:n]) / KOKORO_RATE
@@ -732,7 +745,7 @@ def _fit_length(storyboard, clips, timings, n, most=1.25):
     print(f"[documentary] {'reel' if reel else 'video'} {excess:.1f} s too long: narration {rate:.2f}x faster")
     fast, spans = [], []
     for clip, timing in zip(clips, timings):
-        out = librosa.effects.time_stretch(clip, rate=rate).astype(np.float32)
+        out = _tempo(clip, rate)
         scale = len(out) / len(clip)
         fast.append(out)
         spans.append([(t, round(a * scale), round(b * scale)) for t, a, b in timing])
@@ -857,8 +870,7 @@ def _chatterbox_clips(texts, preset, speed, device):
                 clip = librosa.resample(clip, orig_sr=model.sr, target_sr=KOKORO_RATE)
             if preset["semitones"]:
                 clip = librosa.effects.pitch_shift(clip, sr=KOKORO_RATE, n_steps=preset["semitones"])
-            if abs(stretch - 1.0) > 1e-3:
-                clip = librosa.effects.time_stretch(clip, rate=stretch)
+            clip = _tempo(clip, stretch)
             peak = float(np.abs(clip).max()) or 1.0
             clips.append((clip / peak * 0.9).astype(np.float32))
             # Resampling and stretching keep the parts' proportions.
@@ -907,6 +919,23 @@ def _framed(image, width, height, zoom, device, centre=0.5):
     side, full = square.shape[2], out.shape[2]
     y0 = min(max(round(full * centre - side / 2), 0), full - side)
     out[:, :, y0:y0 + side, :] = square
+    return out
+
+
+def _fitted(image, width, height, zoom, device):
+    """For a wide frame: a portrait or square photo whole, at full height over
+    a blurred, darker copy of itself (cropping it to 16:9 would keep only a
+    band across the middle); a landscape photo fills the frame."""
+    _, h, w, _ = image.shape
+    if w / h >= 1.2:
+        return _cover(image, width, height, zoom, device)
+    out = _blur(_cover(image, width, height, zoom, device)) * 0.5
+    full_h, full_w = out.shape[2], out.shape[3]
+    fit_w = min(round(full_h * w / h), full_w)
+    img = image[0].permute(2, 0, 1)[None].to(device, torch.float32)
+    photo = F.interpolate(img, size=(full_h, fit_w), mode="bicubic", antialias=True, align_corners=False).clamp(0, 1)
+    x0 = (full_w - fit_w) // 2
+    out[:, :, :, x0:x0 + fit_w] = photo
     return out
 
 
@@ -1361,7 +1390,7 @@ class _PhotoScene:
                 # A little above the middle, so the subtitles fit under the photo.
                 self.base = _framed(self.image, width, height, self.zoom, self.device, centre=0.44)
             else:
-                self.base = _cover(self.image, width, height, self.zoom, self.device)
+                self.base = _fitted(self.image, width, height, self.zoom, self.device)
             if self.details:
                 unit = min(width, height)
                 font, lines = _fit(self.details, "regular", unit * (0.03 if self.tall else 0.024),
