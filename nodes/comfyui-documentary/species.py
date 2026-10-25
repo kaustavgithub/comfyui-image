@@ -1,17 +1,16 @@
 """Species identification for Documentary Story: BioCLIP 2 (imageomics, MIT;
-trained on the Tree of Life 200M images) ranks the photo against the birds and
-mammals recorded in the photo's country (from GBIF), plus a few labels for
-"not an animal". A general vision model can't tell close species apart; this
-can, and says how sure it is. Weights, species lists (with each species'
-Wikipedia intro, the story's facts) and their text embeddings are kept in the
-models volume (models/bioclip).
+trained on the Tree of Life 200M images) ranks the photo against the world's
+birds and mammals (GBIF), plus a few labels for "not an animal". A general
+vision model can't tell close species apart; this can, and says how sure it
+is. No location is used: a photo's place is often missing or wrong. Weights,
+the species list (with each species' Wikipedia intro, the story's facts) and
+its text embeddings are kept in the models volume (models/bioclip).
 
 Nothing of the photos or their notes leaves the homelab: the classifier runs
 here, the weights load from the volume (Story's _local_first), and the only
-requests out are one-time downloads: the weights, and a country's species list
-and facts (GBIF and Wikipedia, asked by country code and scientific names).
-Once those are on the volume, it works without the internet."""
-import concurrent.futures
+requests out are one-time downloads: the weights, and the species list and
+facts (GBIF and Wikipedia, asked by scientific names). Once those are on the
+volume, it works without the internet."""
 import json
 import os
 import urllib.error
@@ -26,16 +25,17 @@ import folder_paths
 
 MODEL = "hf-hub:imageomics/bioclip-2"
 GBIF = "https://api.gbif.org/v1"
+BACKBONE = "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c"  # GBIF's backbone taxonomy
+LIST_FILE, LABELS_FILE = "species_world.json", "labels_world.pt"
 # GBIF class keys: the groups a species list holds.
 GROUPS = {"Aves": 212, "Mammalia": 359}
-# A species needs this many records in the country (leaves out one-off vagrants).
+# A species needs this many records in GBIF (leaves out ones barely known).
 MIN_RECORDS = 25
-# How much a species' commonness in the country counts: the classifier's
-# probability times (share of the records) ** PRIOR. Close look-alikes (a
-# northern wheatear and a rare pied one) then go to the common one, unless the
-# photo clearly shows the rare one.
+# How much a species' commonness counts: the classifier's probability times
+# (share of the records) ** PRIOR. Close look-alikes (a northern wheatear and a
+# rare pied one) then go to the common one, unless the photo clearly shows the
+# rare one.
 PRIOR = 0.25
-DEFAULT_COUNTRY = "SE"
 # When one of these wins, the photo has no animal to name.
 NOT_ANIMALS = ["a landscape", "a person", "people", "a building", "a city street", "a plant", "a flower", "a tree",
                "an insect", "a fish", "a reptile", "the sky", "water", "food", "a vehicle", "a boat"]
@@ -54,24 +54,6 @@ def _dir():
 def _get(path, timeout=60):
     with urllib.request.urlopen(urllib.request.Request(f"{GBIF}{path}", headers=HEADERS), timeout=timeout) as r:
         return json.load(r)
-
-
-def country_code(name):
-    """An ISO code for a country name (as Immich writes it), or the name if it
-    already is one; "" if unknown."""
-    name = (name or "").strip()
-    if len(name) == 2 and name.isalpha():
-        return name.upper()
-    if not name:
-        return ""
-    if "countries" not in _state:
-        path = os.path.join(_dir(), "countries.json")
-        if not os.path.exists(path):
-            with open(path, "w") as f:
-                json.dump({c["title"].lower(): c["iso2"] for c in _get("/enumeration/country")}, f)
-        with open(path) as f:
-            _state["countries"] = json.load(f)
-    return _state["countries"].get(name.lower(), "")
 
 
 def _wiki(query, tries=5):
@@ -124,48 +106,54 @@ def _wiki_titles(names):
     return out
 
 
-def _species(item):
-    key, records = item
-    s = _get(f"/species/{key}")
-    scientific = s.get("species") or s.get("canonicalName", "")
-    if not scientific or " x " in scientific or "×" in scientific:  # hybrids
-        return None
-    names = _get(f"/species/{key}/vernacularNames?limit=200").get("results", [])
-    # GBIF's English names without ringing codes (GRTI, COPO); species_list()
-    # puts the Wikipedia title first.
-    common = []
-    for n in names:
-        v = (n.get("vernacularName") or "").strip()
-        if n.get("language") == "eng" and v and not (v.isupper() and len(v) <= 5) \
-                and v.lower() not in (c.lower() for c in common):
-            common.append(v)
-    taxon = " ".join(s.get(r, "") for r in ("kingdom", "phylum", "class", "order", "family")).split()
-    return {"key": key, "scientific": scientific, "taxon": " ".join(taxon), "common": common, "records": records}
+def _backbone(class_key):
+    """All accepted species of a class in GBIF's backbone taxonomy, with their
+    names in every language: {key: record}, 1000 per request."""
+    out, offset = {}, 0
+    while True:
+        q = urllib.parse.urlencode({"datasetKey": BACKBONE, "rank": "SPECIES", "status": "ACCEPTED",
+                                    "highertaxonKey": class_key, "limit": 1000, "offset": offset})
+        reply = _get(f"/species/search?{q}", timeout=180)
+        out.update({r["key"]: r for r in reply.get("results", [])})
+        offset += 1000
+        if reply.get("endOfRecords") or offset >= reply.get("count", 0):
+            return out
 
 
-def species_list(country):
-    """The birds and mammals recorded in a country, cached in models/bioclip:
-    [{"scientific", "taxon", "common": [English names, the Wikipedia title
-    first], "records"}]."""
-    key = f"species_{country}"
-    if key in _state:
-        return _state[key]
-    path = os.path.join(_dir(), f"species_{country}.json")
+def species_list():
+    """The world's birds and mammals with at least MIN_RECORDS records in
+    GBIF, cached in models/bioclip: [{"scientific", "taxon", "common": [English
+    names, the Wikipedia title first], "records", "facts"}]."""
+    if "species" in _state:
+        return _state["species"]
+    path = os.path.join(_dir(), LIST_FILE)
     if os.path.exists(path):
         with open(path) as f:
-            found = json.load(f)
-        if all("facts" in s for s in found):  # older lists have no facts: download again
-            _state[key] = found
-            return found
-    keys = []
-    for key in GROUPS.values():
-        q = urllib.parse.urlencode({"country": country, "classKey": key, "limit": 0, "facet": "speciesKey",
-                                    "facetLimit": 3000, "facetMincount": MIN_RECORDS})
-        facets = _get(f"/occurrence/search?{q}").get("facets", [])
-        keys += [(int(c["name"]), int(c["count"])) for f in facets for c in f.get("counts", [])]
-    print(f"[documentary] species list {country}: {len(keys)} species from GBIF and Wikipedia (once)")
-    with concurrent.futures.ThreadPoolExecutor(8) as pool:
-        found = [s for s in pool.map(_species, keys) if s]
+            _state["species"] = json.load(f)
+        return _state["species"]
+    found = []
+    for class_key in GROUPS.values():
+        q = urllib.parse.urlencode({"classKey": class_key, "limit": 0, "facet": "speciesKey",
+                                    "facetLimit": 30000, "facetMincount": MIN_RECORDS})
+        counts = {int(c["name"]): int(c["count"]) for f in _get(f"/occurrence/search?{q}", timeout=180)["facets"]
+                  for c in f.get("counts", [])}
+        taxa = _backbone(class_key)
+        for key, records in counts.items():
+            t = taxa.get(key)
+            scientific = (t or {}).get("species", "")
+            if not scientific or " x " in scientific or "×" in scientific:  # hybrids, or not in the backbone
+                continue
+            # English names without ringing codes (GRTI, COPO); the Wikipedia title goes first below.
+            common = []
+            for n in t.get("vernacularNames", []):
+                v = (n.get("vernacularName") or "").strip()
+                if n.get("language") == "eng" and v and not (v.isupper() and len(v) <= 5) \
+                        and v.lower() not in (c.lower() for c in common):
+                    common.append(v)
+            taxon = " ".join(t.get(r, "") for r in ("kingdom", "phylum", "class", "order", "family")).split()
+            found.append({"scientific": scientific, "taxon": " ".join(taxon), "common": common, "records": records})
+    print(f"[documentary] species list: {len(found)} birds and mammals from GBIF, names and facts from "
+          "Wikipedia (once)")
     titles = _wiki_titles([s["scientific"] for s in found])
     intros = _wiki_intros(sorted(set(titles.values())))
     for s in found:
@@ -177,7 +165,7 @@ def species_list(country):
     with open(path + ".tmp", "w") as f:
         json.dump(found, f, ensure_ascii=False)
     os.replace(path + ".tmp", path)
-    _state[key] = found
+    _state["species"] = found
     return found
 
 
@@ -193,12 +181,12 @@ def _model(device):
     return _state["model"]
 
 
-def _labels(country, device):
-    """Text embeddings of the country's species, then of NOT_ANIMALS."""
-    key = f"labels_{country}"
+def _labels(device):
+    """Text embeddings of the species, then of NOT_ANIMALS."""
+    key = "labels"
     if key not in _state:
-        species = species_list(country)
-        path = os.path.join(_dir(), f"labels_{country}.pt")
+        species = species_list()
+        path = os.path.join(_dir(), LABELS_FILE)
         if os.path.exists(path):
             text = torch.load(path)
         else:
@@ -229,15 +217,15 @@ def _views(image):
     return [square, pil]
 
 
-def identify(images, countries, device):
-    """For each image ([H,W,3] tensor) and its country code: (common name,
-    scientific name, probability) of the best match, or None when the photo
-    shows no animal; plus the runner-up (for the log)."""
+def identify(images, device):
+    """For each image ([H,W,3] tensor): (common name, scientific name,
+    probability) of the best match, the common name None when the photo shows
+    no animal; plus the runner-up (for the log)."""
     out = []
     try:
         model = _model(device)
-        for image, country in zip(images, countries):
-            species, text, prior = _labels(country or DEFAULT_COUNTRY, device)
+        species, text, prior = _labels(device)
+        for image in images:
             views = torch.stack([_state["preprocess"](v) for v in _views(image)]).to(device)
             with torch.no_grad():
                 feats = torch.nn.functional.normalize(model.encode_image(views).float(), dim=-1).mean(0)
@@ -263,29 +251,34 @@ def identify(images, countries, device):
     return out
 
 
-def facts(name, country):
+def _names():
+    """{lowercase English or scientific name: species}. A name two species
+    share goes to the commoner one."""
+    if "names" not in _state:
+        names = {}
+        for s in sorted(species_list(), key=lambda s: s["records"]):
+            for name in s["common"] + [s["scientific"]]:
+                names[name.lower()] = s
+        _state["names"] = names
+    return _state["names"]
+
+
+def facts(name):
     """The Wikipedia intro of a species, by its scientific or an English name
     (exact, ignoring case), from the local list; "" if it isn't one."""
-    name = (name or "").strip().lower()
-    if not name:
-        return ""
-    for s in species_list(country or DEFAULT_COUNTRY):
-        if name == s["scientific"].lower() or name in (c.lower() for c in s["common"]):
-            return s.get("facts", "")
-    return ""
+    s = _names().get((name or "").strip().lower())
+    return s.get("facts", "") if s else ""
 
 
-def named_in(text, country):
+def named_in(text):
     """The species a text names (an English or scientific name, as a whole
     phrase, ignoring case; the longest if several): (common, scientific) or
     None. For the photographer's own note, which then beats the classifier."""
     import re
 
-    if not text:
-        return None
+    low = (text or "").lower()
     best, size = None, 0
-    for s in species_list(country or DEFAULT_COUNTRY):
-        for name in s["common"] + [s["scientific"]]:
-            if len(name) > size and re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text, re.IGNORECASE):
-                best, size = (s["common"][0], s["scientific"]), len(name)
+    for name, s in _names().items():
+        if len(name) > size and name in low and re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", low):
+            best, size = (s["common"][0], s["scientific"]), len(name)
     return best

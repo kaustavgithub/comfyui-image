@@ -48,8 +48,12 @@ RUN pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" \
 # Kokoro would otherwise try to download at runtime.
 ARG KOKORO_VERSION=0.9.4
 ARG SPACY_EN=https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-RUN pip install "kokoro==$KOKORO_VERSION" "$SPACY_EN" \
- && pip check
+# preshed 3.0.14 breaks loading spaCy's model ("OverflowError: Python int too
+# large to convert to C ssize_t"), and with it Kokoro and Chatterbox's built-in
+# voices (made with Kokoro once); 3.0.12 works (2026-10-25).
+RUN pip install "kokoro==$KOKORO_VERSION" "$SPACY_EN" "preshed==3.0.12" \
+ && pip check \
+ && python -c "import spacy; spacy.load('en_core_web_sm')"
 
 # Chatterbox TTS (the documentary's default voice; weights download to
 # /data/models/chatterbox on first use). Its own pins (torch 2.6, numpy < 2,

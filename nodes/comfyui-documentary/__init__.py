@@ -83,20 +83,20 @@ def _jpeg_b64(image, max_side=1024):
 
 
 def _collect(kwargs):
-    """(image, name, note, details, country) for each connected image, in input
-    order. A Documentary Photo brings its own name, note, camera details and
-    country; a plain image has none."""
+    """(image, name, note, details) for each connected image, in input order. A
+    Documentary Photo brings its own name, note and camera details; a plain
+    image has none."""
     out = []
     for i in range(1, MAX_IMAGES + 1):
         item = kwargs.get(f"image_{i}")
         if item is None:
             continue
-        name, details, country, note = "", "", "", str(kwargs.get(f"note_{i}") or "").strip()
+        name, details, note = "", "", str(kwargs.get(f"note_{i}") or "").strip()
         if isinstance(item, dict):
-            name, details, country = item.get("name", ""), item.get("details", ""), item.get("country", "")
+            name, details = item.get("name", ""), item.get("details", "")
             note = " ".join(x for x in (item.get("note", ""), note) if x)
             item = item["image"]
-        out.append((item, name, note, details, country))
+        out.append((item, name, note, details))
     return out
 
 
@@ -120,10 +120,6 @@ class DocumentaryPhoto:
                 "details": ("STRING", {"default": "",
                                        "placeholder": "Optional: camera settings (e.g. Nikon Z6 · 500 mm · f/5.6 · 1/2000 s · ISO 800)",
                                        "tooltip": "Shown small on the photo's slide when the story says it fits"}),
-                "country": ("STRING", {"default": "",
-                                       "placeholder": "Optional: where it was taken (Sweden, or SE)",
-                                       "tooltip": "Species identification compares the photo with the birds and "
-                                                  "mammals recorded there (empty: Story's species_country)"}),
             },
         }
 
@@ -132,14 +128,13 @@ class DocumentaryPhoto:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, image, name, note, details="", country=""):
+    def run(self, image, name, note, details=""):
         loaded = nodes.LoadImage().load_image(image)[0]
         name = name.strip()
         if name.lower() == "image":
             # Left over from the first template, whose widget values were one off.
             name = ""
-        return ({"image": loaded, "name": name, "note": note.strip(), "details": details.strip(),
-                 "country": country.strip()}, loaded)
+        return ({"image": loaded, "name": name, "note": note.strip(), "details": details.strip()}, loaded)
 
     @classmethod
     def IS_CHANGED(cls, image, **kwargs):
@@ -196,9 +191,22 @@ MOODS = {
         "The animals are suspects, witnesses and the accused in one case that unfolds across the moments, with "
         "clues, a twist and a verdict at the end."
     ),
+    "behind the lens": (
+        "The photographer, first person, telling a friend how each shot happened: present tense, warm, honest, "
+        "plain everyday words, like talking, not writing. The waiting, how far away or close the animal was, the "
+        "light at that hour, the split second it happened, and what it felt like to get it. Use only what the "
+        "'camera' settings and the photographer's note say about the shot (the hour, the lens, the shutter "
+        "speed, the date); never invent where you were, who you were with, the weather or what happened before. "
+        "Say the time of day the way people do ('just after eight in the morning', 'late evening'), never as "
+        "digits or 'eight five'. Mention a camera setting only where it is the story (a fast shutter for a "
+        "bird that wouldn't sit still, a long lens for one that was far away), at most twice in the whole film. "
+        "When a moment has a 'reference', one interesting fact from it."
+    ),
     "custom": "",
 }
 DEFAULT_MOOD = "documentary (Nat Geo)"
+# The photographer's own story of each shot: the writer also sees the camera settings.
+LENS_MOOD = "behind the lens"
 # Not a mood of its own: the writer picks one of MOODS from what the vision model saw.
 AUTO_MOOD = "auto (from photos)"
 # Camera details (Documentary Photo's "details") on the slides.
@@ -219,32 +227,36 @@ MOOD_LABELS = {
     "nostalgic memoir": "A memoir",
     "sports commentary": "The final",
     "mystery / noir": "A case file",
+    "behind the lens": "Behind the shot",
 }
 # Spoken at the end when the story has no closing line of its own.
 DEFAULT_OUTRO = "If you enjoyed this story, follow for more."
 
-# Where the video goes. A reel is 9:16 and at most 40 s long: the story writes
+# Where the video goes. A reel is 9:16 and at most 60 s long: the story writes
 # fewer words, Narrate speeds up a narration that is still too long, and Ken
 # Burns Video uses short intro, pauses, transitions and follow card.
 TARGETS = ["YouTube video", "Instagram reel"]
 REEL = "Instagram reel"
 REEL_SIZE = (1080, 1920)
-REEL_SECONDS = 28.0  # what the story's word count aims at
-REEL_MAX = 40.0
+REEL_SECONDS = 28.0  # what the story's word count aims at without max_seconds
+REEL_MAX = 60.0
 REEL_INTRO, REEL_OUTRO, REEL_PAUSES, REEL_FADE = 2.5, 3.0, (0.25, 0.45), 0.5
 WORDS_PER_SECOND = 2.1  # how fast the narrators speak, measured
+# A reel's budget: Chatterbox spoke a reel at about 3.3 words a second
+# (2026-10-25); 2.1 left a 50 s reel at 35 s, in clipped sentences.
+REEL_WORDS_PER_SECOND = 2.8
 
 
 def _is_reel(storyboard):
     return storyboard.get("target") == REEL
 
 
-def _reel_words(n, limit=REEL_MAX):
-    """Words per photo for a reel of about REEL_SECONDS (or less, under a
-    shorter limit) with n photos."""
-    aim = min(REEL_SECONDS, limit - 3.0)
+def _reel_words(n, limit=0.0):
+    """Words per photo for a reel with n photos: a few seconds under `limit`,
+    or about REEL_SECONDS without one."""
+    aim = min(limit, REEL_MAX) - 3.0 if limit > 0 else REEL_SECONDS
     speech = aim - REEL_INTRO - (REEL_OUTRO + 0.5) - n * sum(REEL_PAUSES)
-    return max(5, min(30, int(speech * WORDS_PER_SECOND / n)))
+    return max(5, min(40, int(speech * REEL_WORDS_PER_SECOND / n)))
 
 
 # A YouTube video's timing with Ken Burns Video's defaults: intro, pause before
@@ -281,8 +293,11 @@ VOICE_PRESETS = {
     "nostalgic memoir": {"voice": "bf_isabella", "intensity": 0.5, "cfg": 0.5, "stretch": 0.95, "semitones": 0, "kokoro_speed": 0.9},
     "sports commentary": {"voice": "am_michael", "intensity": 1.4, "cfg": 0.3, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.15},
     "mystery / noir": {"voice": "bm_lewis", "intensity": 0.6, "cfg": 0.4, "stretch": 0.95, "semitones": -1, "kokoro_speed": 0.9},
+    "behind the lens": {"voice": "bm_fable", "intensity": 0.45, "cfg": 0.55, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.0},
 }
 AUTO_VOICE = "auto (from mood)"
+# Your own voice (my_voice): at most this much expression, at least this cfg.
+MY_VOICE_INTENSITY, MY_VOICE_CFG = 0.4, 0.6
 
 LOOK_PROMPT = (
     "Look at this photograph like a careful observer. Identify the main subject as precisely as you can: "
@@ -447,11 +462,11 @@ class DocumentaryStory:
                                                   "placeholder": "Optional: your own narration, one paragraph per image, separated by blank lines. Skips the models."}),
                 "target": (TARGETS, {"default": TARGETS[0],
                                      "tooltip": "YouTube video: 16:9, words_per_image as set. Instagram reel: 9:16, "
-                                                "about 30 s, at most 40 (words per image set to fit; 4-6 photos work best)"}),
+                                                "about 30 s (or max_seconds), at most 60 (words per image set to fit; 4-6 photos work best)"}),
                 "max_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1800.0, "step": 5.0,
                                           "tooltip": "The longest the video may be; fewer words per image, and Narrate "
                                                      "speeds up a narration that still runs over. 0 = no limit "
-                                                     "(a reel: 40 s)"}),
+                                                     "(a reel: 60 s)"}),
                 "camera_details": (CAMERA_DETAILS, {"default": CAMERA_DETAILS[0],
                                                     "tooltip": "The photos' camera details as a small line on "
                                                                "their slides: where they fit the story, on every "
@@ -465,9 +480,6 @@ class DocumentaryStory:
                 "species_min_confidence": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
                                                      "tooltip": "How sure BioCLIP must be to name the species "
                                                                 "(its probability, in the log)"}),
-                "species_country": ("STRING", {"default": species_id.DEFAULT_COUNTRY,
-                                               "tooltip": "For photos without a country: the species recorded "
-                                                          "there (GBIF) are the candidates"}),
                 "avoid_moods": ("STRING", {"default": "",
                                            "placeholder": "Optional: moods auto must not pick, comma-separated "
                                                           "(e.g. the last nights')"}),
@@ -482,7 +494,7 @@ class DocumentaryStory:
 
     def run(self, brief, mood, custom_style, model, writer_model, language, words_per_image, temperature, seed,
             narration_override, target=TARGETS[0], max_seconds=0.0, camera_details=CAMERA_DETAILS[0],
-            species_id=SPECIES_ID[0], species_min_confidence=0.5, species_country="", avoid_moods="", **kwargs):
+            species_id=SPECIES_ID[0], species_min_confidence=0.5, avoid_moods="", **kwargs):
         shots = _collect(kwargs)
         n = len(shots)
         if n < MIN_IMAGES:
@@ -491,7 +503,6 @@ class DocumentaryStory:
         names = [shot[1] for shot in shots]
         notes = [shot[2] for shot in shots]
         details = [shot[3] for shot in shots]
-        countries = [shot[4] for shot in shots]
         avoid = [m.strip() for m in avoid_moods.split(",") if m.strip()]
         auto = mood == AUTO_MOOD and not custom_style.strip()
         if auto and narration_override.strip():
@@ -503,7 +514,7 @@ class DocumentaryStory:
         reel = target == REEL
         limit = _limit({"target": target, "max_seconds": max_seconds})
         if reel:
-            words_per_image = _reel_words(n, limit)
+            words_per_image = _reel_words(n, max_seconds)
         elif limit > 0:
             words_per_image = _video_words(n, limit, words_per_image)
         if narration_override.strip():
@@ -513,12 +524,11 @@ class DocumentaryStory:
         else:
             writer = writer_model.strip() or model
             # The models stay loaded for Social Post; Narrate, Music and Video free the GPU.
-            known = self._species(images, names, notes, countries, species_id, species_min_confidence,
-                                  species_country)
-            facts, texts, title, extra = self._narrate(images, known, notes,
-                                                       details if camera_details == CAMERA_DETAILS[0] else [""] * n,
-                                                       brief, model, writer, language, words_per_image,
-                                                       temperature, seed, style, 10 if reel else 20, avoid)
+            known = self._species(images, names, notes, species_id, species_min_confidence)
+            facts, texts, title, extra = self._narrate(images, known, notes, details,
+                                                       camera_details == CAMERA_DETAILS[0], brief, model, writer,
+                                                       language, words_per_image, temperature, seed, style,
+                                                       10 if reel else 20, avoid)
             mood = extra.get("mood") or mood
         # Camera details: on the slides the writer chose (all of them without the writer), or as set.
         shown = {"always": [True] * n, "never": [False] * n}.get(camera_details) or extra.get("show_details") \
@@ -535,46 +545,44 @@ class DocumentaryStory:
                  "language": language, "target": target, "max_seconds": limit, "details": details}, story)
 
     @staticmethod
-    def _species(images, names, notes, countries, mode, min_confidence, default_country):
+    def _species(images, names, notes, mode, min_confidence):
         """Per image {"name", "facts", "animal"}: the subject's name and its
         facts (the species' Wikipedia intro, from the local species list; ""
         for both when unknown), and whether it is an animal of unsure species
         (None: not known). In order: the name given on the photo, a species
         named in its note, BioCLIP when sure. Nothing leaves the homelab."""
         known = [{"name": name, "facts": "", "animal": None} for name in names]
-        fallback = species_id.country_code(default_country) or species_id.DEFAULT_COUNTRY
-        codes = [species_id.country_code(c) or fallback for c in countries]
         if mode == "off":
-            for k, code in zip(known, codes):
+            for k in known:
                 try:
-                    k["facts"] = species_id.facts(k["name"], code)
+                    k["facts"] = species_id.facts(k["name"])
                 except Exception:  # no species list (offline)
                     pass
             return known
         try:
-            for k, code in zip(known, codes):
+            for k in known:
                 if k["name"]:
-                    k["facts"] = species_id.facts(k["name"], code)
-            for k, note, code in zip(known, notes, codes):
-                hit = None if k["name"] else species_id.named_in(note, code)
+                    k["facts"] = species_id.facts(k["name"])
+            for k, note in zip(known, notes):
+                hit = None if k["name"] else species_id.named_in(note)
                 if hit:
-                    k.update(name=hit[0], facts=species_id.facts(hit[1], code), source="your note")
+                    k.update(name=hit[0], facts=species_id.facts(hit[1]), source="your note")
             todo = [i for i, k in enumerate(known) if not k["name"]]
             found = []
             if todo:
-                args = ([images[i][0] for i in todo], [codes[i] for i in todo])
+                todo_images = [images[i][0] for i in todo]
                 try:
-                    found = _local_first(lambda: species_id.identify(*args, comfy.model_management.get_torch_device()))
+                    found = _local_first(lambda: species_id.identify(todo_images,
+                                                                     comfy.model_management.get_torch_device()))
                 except torch.cuda.OutOfMemoryError:  # the LLMs fill the GPU: slower, on the CPU
-                    found = _local_first(lambda: species_id.identify(*args, "cpu"))
+                    found = _local_first(lambda: species_id.identify(todo_images, "cpu"))
             for i, picks in zip(todo, found):
                 (common, scientific, p), runner = picks[0], picks[1]
                 known[i]["best"] = f"{common or scientific} {p:.2f}, then {runner[0] or runner[1]} {runner[2]:.2f}"
                 if common is None:
                     known[i]["animal"] = False  # a landscape, a person, a building: the vision model names it
                 elif p >= min_confidence:
-                    known[i].update(name=common, facts=species_id.facts(scientific, codes[i]),
-                                    source=f"BioCLIP {p:.2f}")
+                    known[i].update(name=common, facts=species_id.facts(scientific), source=f"BioCLIP {p:.2f}")
                 else:
                     known[i]["animal"] = True
         except Exception as e:  # no network for GBIF, no weights: the vision model guesses, as before
@@ -585,8 +593,9 @@ class DocumentaryStory:
             print(f"[documentary] species {i}: {said} ({k.get('source') or k.get('best') or 'given'})")
         return known
 
-    def _narrate(self, images, known, notes, details, brief, vision, writer, language, words, temperature, seed,
-                 style, outro_words=20, avoid=()):
+    def _narrate(self, images, known, notes, details, ask_show, brief, vision, writer, language, words,
+                 temperature, seed, style, outro_words=20, avoid=()):
+        """ask_show: the plan says on which slides the camera details fit."""
         # One look per image: with all images in one request the vision model lost
         # track of which image it was on. All looks first, then all writing: the
         # two models may share a GPU, and alternating would reload one each time.
@@ -606,25 +615,31 @@ class DocumentaryStory:
                 fact = {"name": name, **fact, "subject": name}
             facts.append(fact)
         shots = [{**f, **({"photographer_note": n} if n else {})} for f, n in zip(facts, notes)]
-        # Camera details only go into the plan (to decide where they show), not into the writing.
-        cameras = [{**shot, "camera": d} if d else shot for shot, d in zip(shots, details)]
         # True facts only for a known species (its Wikipedia intro, kept locally);
         # never a lookup online with the photos' subjects or notes.
         for shot, k in zip(shots, known):
             if k["facts"]:
                 shot["reference"] = k["facts"]
+        # Camera details go into the plan (to decide where they show), and into the
+        # writing only for LENS_MOOD.
+        cameras = [{**shot, "camera": d} if d else shot for shot, d in zip(shots, details)]
         n = len(images)
         mood = None
         if style is None:
             mood = self._pick_mood(shots, brief, writer, seed, avoid)
             style = MOODS[mood]
+        lens = style == MOODS[LENS_MOOD]
+        if lens:
+            shots = cameras  # the hour, lens and shutter speed are this story's material
         common = (
             f"Tone and approach: {style} "
             + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
             + "The viewer sees each picture while the narration plays, so never describe what is visible "
-            "(colours, poses, perches, grass, sky, light). Use what is in the pictures only as the starting point, "
+            "(colours, poses, perches, grass, sky). Use what is in the pictures only as the starting point, "
             "and give the viewer what they can't see: the story, the stakes, feelings, meaning, jokes, true facts. "
-            "Never mention a photo, image, picture, camera, frame, shot, slide or background. "
+            + ("Talk about taking the shot, but never say 'photo', 'image', 'picture', 'frame' or 'slide'. " if lens
+               else "Never mention a photo, image, picture, camera, frame, shot, slide or background. ")
+            + "Speak to the viewer, in short sentences that are easy to say aloud. "
             "Real-world facts (numbers, habits, abilities, records) may only come from the 'reference' text given "
             "for a moment; never invent or embellish one, and if there is no reference, use no facts. "
             "Don't label facts ('fun fact'). Use common names, never scientific names. "
@@ -634,13 +649,17 @@ class DocumentaryStory:
             "the most specific name in 'subject'. "
         )
         # Plan first, so the moments add up to one story instead of n captions.
-        has_camera = any(details)
+        has_camera = ask_show and any(details)
+        seen = cameras if has_camera or lens else shots
         plan_prompt = (
             f"You are writing a narrated slideshow of {n} moments, in {language}. {common}"
-            f"What an observer saw in each moment, in order: {json.dumps(cameras, ensure_ascii=False)}. "
+            f"What an observer saw in each moment, in order: {json.dumps(seen, ensure_ascii=False)}. "
             f"Plan the narration as one story in this tone: a title, a one-sentence premise, and exactly {n} beats, "
             "one per moment in order, each saying what that moment's narration does for the story "
             "(not what the picture shows). "
+            "Also an 'opening': the very first line the viewer hears, at most 12 words, that stops someone "
+            "scrolling past: a question, a surprise or a bold promise of what's coming, in this tone, and true "
+            "(no invented facts). "
             "Also a 'hook': a thumbnail headline of 2 to 5 words that makes people want to watch (no quotes, no "
             f"hashtags), and an 'outro': one short closing line to be spoken at the very end, under {outro_words} words, in the "
             "same tone, that asks the viewer to follow for more stories like this; it must say 'follow' (in the "
@@ -652,12 +671,12 @@ class DocumentaryStory:
                "part of the story (then on most moments that have them), no where it would break the spell "
                "(a bedtime story, a joke, a noir mystery). "
                if has_camera else "")
-            + 'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "hook": "...", '
-            '"outro": "..."' + (', "show_details": [true, ...]' if has_camera else "") + "}"
+            + 'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "opening": "...", '
+            '"hook": "...", "outro": "..."' + (', "show_details": [true, ...]' if has_camera else "") + "}"
         )
         properties = {"title": {"type": "string"}, "premise": {"type": "string"},
                       "beats": {"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n},
-                      "hook": {"type": "string"}, "outro": {"type": "string"}}
+                      "opening": {"type": "string"}, "hook": {"type": "string"}, "outro": {"type": "string"}}
         if has_camera:
             properties["show_details"] = {"type": "array", "items": {"type": "boolean"}, "minItems": n,
                                           "maxItems": n}
@@ -665,6 +684,8 @@ class DocumentaryStory:
                                                   "required": list(properties)}, temperature, seed)
         beats = [str(b).strip() for b in plan.get("beats", [])]
         beats += [""] * (n - len(beats))
+        opening = str(plan.get("opening", "")).strip().strip('"')
+        print(f"[documentary] opening: {opening!r}")
         texts = []
         for index, (shot, beat) in enumerate(zip(shots, beats)):
             comfy.model_management.throw_exception_if_processing_interrupted()
@@ -673,8 +694,12 @@ class DocumentaryStory:
                 f"\"{plan.get('title', '')}\". {common}"
                 f"The story's premise: {plan.get('premise', '')} "
                 f"This moment's job in the story: {beat} "
+                + (f"This is the first moment: start its narration with exactly this line, then go on: "
+                   f"{json.dumps(opening, ensure_ascii=False)}. " if index == 0 and opening else "")
                 + (f"This moment's subject is the {shot['name']}: say '{shot['name']}' in the narration. "
                    if shot.get("name") else "")
+                + (f"Nobody knows this animal's species: call it only {json.dumps(shot.get('subject', ''))} or "
+                   "a word like it, never by a species name. " if known[index]["animal"] else "")
                 + f"What an observer saw in this moment (the viewer sees it too; don't list it): "
                 f"{json.dumps(shot, ensure_ascii=False)}. "
                 f"Write {words} words at most, to be spoken aloud in {language}. "
@@ -688,8 +713,18 @@ class DocumentaryStory:
             text = str(reply.get("narration", "")).strip()
             if not text:
                 raise RuntimeError(f"{writer} wrote no narration for image {index + 1}; run again or change the seed")
-            # True numbers: the species' facts and the photographer's note (a date, a count).
-            known_text = f"{shot.get('reference', '')} {shot.get('photographer_note', '')}"
+            if len(text.split()) > words * 1.2:
+                # The writer overruns "at most N words", and Narrate can only speed up so much.
+                print(f"[documentary] moment {index + 1}: {len(text.split())} words for {words}: shortening")
+                short = (f"{prompt} Your first answer was: {json.dumps(text, ensure_ascii=False)}. It has "
+                         f"{len(text.split())} words; the limit is {words}. Write it again in at most {words} words, "
+                         "keeping its best line.")
+                reply = _llm_json(writer, short, {"type": "object", "properties": {"narration": {"type": "string"}},
+                                                  "required": ["narration"]}, temperature, seed + index + 201)
+                text = str(reply.get("narration", "")).strip() or text
+            # True numbers: the species' facts, the photographer's note (a date, a
+            # count) and, for LENS_MOOD, the camera settings.
+            known_text = f"{shot.get('reference', '')} {shot.get('photographer_note', '')} {shot.get('camera', '')}"
             invented = _unsupported_numbers(text, known_text)
             if invented:
                 # Once more without them; then without the sentences that still have them.
@@ -820,6 +855,13 @@ class NarrateStoryboard:
                 print("[documentary] my_voice is connected: using Chatterbox instead of Kokoro")
             preset["reference"] = _own_voice(my_voice)
             preset["semitones"] = 0
+            # As you speak: a mood's strong expression and low cfg over-acted your
+            # voice and mispronounced words; a higher cfg keeps closer to the
+            # recording, accent included, and no mood pace. intensity > 0 still sets it.
+            if intensity <= 0:
+                preset["intensity"] = min(preset["intensity"], MY_VOICE_INTENSITY)
+            preset["cfg"] = max(preset["cfg"], MY_VOICE_CFG)
+            preset["stretch"] = 1.0
             engine = "chatterbox"
         if engine == "kokoro":
             clips, timings = _kokoro_clips(texts, preset["voice"], preset["kokoro_speed"] * speed, device)
