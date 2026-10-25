@@ -2,9 +2,10 @@
 
   Documentary Photo            Load Image plus an optional name and note per photo
   Documentary Story            3-10 images (or photos), each with an optional note:
-                               a vision model identifies the subject (unless named)
-                               and what it does, a text model writes the narration
-                               in the chosen mood
+                               the species from the name, a species named in the
+                               note, or BioCLIP 2 (species.py) when it is sure; a
+                               vision model says what the subject does, a text
+                               model writes the narration in the chosen mood
   Narrate Storyboard           local text-to-speech, one clip per image plus the
                                closing follow line: Chatterbox (expressive, voice and
                                emotion from the mood) or Kokoro
@@ -51,6 +52,8 @@ import folder_paths
 import nodes
 from comfy_api.latest import InputImpl
 
+from . import species as species_id
+
 STORYBOARD = "DOC_STORYBOARD"
 PHOTO = "DOC_PHOTO"
 # The Story's image inputs take a plain IMAGE (Load Image) or a Documentary Photo.
@@ -80,20 +83,20 @@ def _jpeg_b64(image, max_side=1024):
 
 
 def _collect(kwargs):
-    """(image, name, note, details) for each connected image, in input order. A
-    Documentary Photo brings its own name, note and camera details; a plain
-    image has none."""
+    """(image, name, note, details, country) for each connected image, in input
+    order. A Documentary Photo brings its own name, note, camera details and
+    country; a plain image has none."""
     out = []
     for i in range(1, MAX_IMAGES + 1):
         item = kwargs.get(f"image_{i}")
         if item is None:
             continue
-        name, details, note = "", "", str(kwargs.get(f"note_{i}") or "").strip()
+        name, details, country, note = "", "", "", str(kwargs.get(f"note_{i}") or "").strip()
         if isinstance(item, dict):
-            name, details = item.get("name", ""), item.get("details", "")
+            name, details, country = item.get("name", ""), item.get("details", ""), item.get("country", "")
             note = " ".join(x for x in (item.get("note", ""), note) if x)
             item = item["image"]
-        out.append((item, name, note, details))
+        out.append((item, name, note, details, country))
     return out
 
 
@@ -117,6 +120,10 @@ class DocumentaryPhoto:
                 "details": ("STRING", {"default": "",
                                        "placeholder": "Optional: camera settings (e.g. Nikon Z6 · 500 mm · f/5.6 · 1/2000 s · ISO 800)",
                                        "tooltip": "Shown small on the photo's slide when the story says it fits"}),
+                "country": ("STRING", {"default": "",
+                                       "placeholder": "Optional: where it was taken (Sweden, or SE)",
+                                       "tooltip": "Species identification compares the photo with the birds and "
+                                                  "mammals recorded there (empty: Story's species_country)"}),
             },
         }
 
@@ -125,13 +132,14 @@ class DocumentaryPhoto:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, image, name, note, details=""):
+    def run(self, image, name, note, details="", country=""):
         loaded = nodes.LoadImage().load_image(image)[0]
         name = name.strip()
         if name.lower() == "image":
             # Left over from the first template, whose widget values were one off.
             name = ""
-        return ({"image": loaded, "name": name, "note": note.strip(), "details": details.strip()}, loaded)
+        return ({"image": loaded, "name": name, "note": note.strip(), "details": details.strip(),
+                 "country": country.strip()}, loaded)
 
     @classmethod
     def IS_CHANGED(cls, image, **kwargs):
@@ -148,7 +156,7 @@ MOODS = {
     "documentary (Nat Geo)": (
         "A National Geographic wildlife documentary narrator: warm, curious, with a dry sense of humour. "
         "Tell the life story behind each animal: how it survives, hunts, migrates, raises young or gets through "
-        "the season, and one surprising true fact, tied to what it is doing at that moment. When it is doing "
+        "the season, and, when the moment has a 'reference', one surprising fact from it, tied to what it is doing. When it is doing "
         "nothing in particular, end with a funny one-liner, like a narrator who has watched it for far too long."
     ),
     "funny": (
@@ -180,8 +188,8 @@ MOODS = {
     ),
     "sports commentary": (
         "Live sports commentary of a championship final: fast, excited play-by-play. The animals are star "
-        "athletes with records and rivalries; give stats, tactics, replays and a running score across the "
-        "moments, building to a final whistle and a winner."
+        "athletes with rivalries; give tactics, replays and a running score across the moments (the score is "
+        "part of the game, not a fact), building to a final whistle and a winner."
     ),
     "mystery / noir": (
         "A hard-boiled film-noir detective voice-over, first person: dry, world-weary, full of wry similes. "
@@ -195,6 +203,12 @@ DEFAULT_MOOD = "documentary (Nat Geo)"
 AUTO_MOOD = "auto (from photos)"
 # Camera details (Documentary Photo's "details") on the slides.
 CAMERA_DETAILS = ["auto (the writer decides)", "always", "never"]
+# Species identification (species.py).
+SPECIES_ID = ["BioCLIP 2", "off"]
+# What the vision model is told when the photo shows an animal whose species
+# nobody is sure of: a wrong species would bring the wrong facts.
+UNSURE_SPECIES = ("Nobody is sure of this animal's species: in 'subject', name only the general kind (for example "
+                  "'a duck', 'a small songbird', 'a bird of prey', 'a deer'), never a species. ")
 # The small line under the title in the intro, and on the thumbnail.
 MOOD_LABELS = {
     "documentary (Nat Geo)": "A wildlife story",
@@ -325,30 +339,54 @@ def _llm_json(model, content, schema, temperature, seed, images=None, tries=3, m
     raise RuntimeError(f"{model} did not answer with JSON; run again or change the seed. Reply: {reply[:500]}")
 
 
-def _reference_facts(subject, limit=1200):
-    """The intro of the subject's English Wikipedia article (via search), so the
-    writer has true facts to use instead of inventing them. "" if not found."""
-    import urllib.parse
+NUMBER_WORDS = ("hundred", "thousand", "million", "billion", "dozen")
 
-    if not subject or subject.lower() in ("none", "unknown", "nothing"):
-        return ""
-    headers = {"User-Agent": "comfyui-documentary/1.0 (homelab)"}
-    api = "https://en.wikipedia.org/w/api.php?"
+
+def _unsupported_numbers(text, reference):
+    """Numbers in a narration that its moment's reference doesn't have: digits
+    ("5,000", "12") and big number words ("thousands"). The writer adds them
+    even when told not to; each one is an invented fact."""
+    import re
+
+    ref = (reference or "").lower().replace(",", "")
+    found = []
+    for m in re.finditer(r"\d[\d,.]*", text):
+        digits = m.group().rstrip(".,").replace(",", "")
+        if digits and not re.search(rf"(?<![\d.]){re.escape(digits)}(?![\d])", ref):
+            found.append(m.group().rstrip(".,"))
+    found += [w for w in NUMBER_WORDS if re.search(rf"\b{w}s?\b", text, re.I) and w not in ref]
+    return found
+
+
+def _drop_sentences_with(text, numbers):
+    """The narration without the sentences that hold one of `numbers` (at least one sentence stays)."""
+    import re
+
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    keep = [x for x in sentences if not any(n.lower() in x.lower() for n in numbers)]
+    return " ".join(keep or sentences[:1])
+
+
+def _local_first(load):
+    """load() with the models from the volume only, without asking Hugging Face
+    for updates; online only when a file isn't there yet (its first use). So a
+    workflow runs without the internet, and nothing but a model's name ever
+    goes out."""
+    from huggingface_hub import constants
+    from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
+
+    was = constants.HF_HUB_OFFLINE
+    constants.HF_HUB_OFFLINE = True
     try:
-        q = urllib.parse.urlencode({"action": "query", "list": "search", "srsearch": subject, "srlimit": 1,
-                                    "format": "json"})
-        with urllib.request.urlopen(urllib.request.Request(api + q, headers=headers), timeout=15) as r:
-            hits = json.load(r)["query"]["search"]
-        if not hits:
-            return ""
-        q = urllib.parse.urlencode({"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
-                                    "redirects": 1, "titles": hits[0]["title"], "format": "json"})
-        with urllib.request.urlopen(urllib.request.Request(api + q, headers=headers), timeout=15) as r:
-            pages = json.load(r)["query"]["pages"]
-        text = next(iter(pages.values())).get("extract", "").strip()
-        return f"{hits[0]['title']}: {text[:limit]}" if text else ""
-    except (urllib.error.URLError, OSError, KeyError, ValueError, StopIteration):
-        return ""
+        return load()
+    except Exception as e:
+        # Some libraries wrap the hub's error in their own.
+        if not isinstance(e, (LocalEntryNotFoundError, OfflineModeIsEnabled)) and "offline mode" not in str(e):
+            raise
+        print(f"[documentary] a model file is not on the volume yet: downloading it once ({str(e)[:120]})")
+    finally:
+        constants.HF_HUB_OFFLINE = was
+    return load()
 
 
 def _free_gpu(timeout=90):
@@ -418,6 +456,21 @@ class DocumentaryStory:
                                                     "tooltip": "The photos' camera details as a small line on "
                                                                "their slides: where they fit the story, on every "
                                                                "slide that has them, or never"}),
+                "species_id": (SPECIES_ID, {"default": SPECIES_ID[0],
+                                            "tooltip": "BioCLIP 2 names a bird's or mammal's species when it is "
+                                                       "sure (a name given on the photo, or a species named in its "
+                                                       "note, always wins). When nobody is sure, the story says "
+                                                       "only 'a duck' and uses no facts. off: the vision model "
+                                                       "guesses, as before"}),
+                "species_min_confidence": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                                                     "tooltip": "How sure BioCLIP must be to name the species "
+                                                                "(its probability, in the log)"}),
+                "species_country": ("STRING", {"default": species_id.DEFAULT_COUNTRY,
+                                               "tooltip": "For photos without a country: the species recorded "
+                                                          "there (GBIF) are the candidates"}),
+                "avoid_moods": ("STRING", {"default": "",
+                                           "placeholder": "Optional: moods auto must not pick, comma-separated "
+                                                          "(e.g. the last nights')"}),
             },
             "optional": optional,
         }
@@ -428,15 +481,18 @@ class DocumentaryStory:
     CATEGORY = "documentary"
 
     def run(self, brief, mood, custom_style, model, writer_model, language, words_per_image, temperature, seed,
-            narration_override, target=TARGETS[0], max_seconds=0.0, camera_details=CAMERA_DETAILS[0], **kwargs):
+            narration_override, target=TARGETS[0], max_seconds=0.0, camera_details=CAMERA_DETAILS[0],
+            species_id=SPECIES_ID[0], species_min_confidence=0.5, species_country="", avoid_moods="", **kwargs):
         shots = _collect(kwargs)
         n = len(shots)
         if n < MIN_IMAGES:
             raise ValueError(f"Connect at least {MIN_IMAGES} images (connected: {n})")
-        images = [image for image, _, _, _ in shots]
-        names = [name for _, name, _, _ in shots]
-        notes = [note for _, _, note, _ in shots]
-        details = [d for _, _, _, d in shots]
+        images = [shot[0] for shot in shots]
+        names = [shot[1] for shot in shots]
+        notes = [shot[2] for shot in shots]
+        details = [shot[3] for shot in shots]
+        countries = [shot[4] for shot in shots]
+        avoid = [m.strip() for m in avoid_moods.split(",") if m.strip()]
         auto = mood == AUTO_MOOD and not custom_style.strip()
         if auto and narration_override.strip():
             mood, auto = DEFAULT_MOOD, False  # nothing to pick from without the models
@@ -457,10 +513,12 @@ class DocumentaryStory:
         else:
             writer = writer_model.strip() or model
             # The models stay loaded for Social Post; Narrate, Music and Video free the GPU.
-            facts, texts, title, extra = self._narrate(images, names, notes,
+            known = self._species(images, names, notes, countries, species_id, species_min_confidence,
+                                  species_country)
+            facts, texts, title, extra = self._narrate(images, known, notes,
                                                        details if camera_details == CAMERA_DETAILS[0] else [""] * n,
                                                        brief, model, writer, language, words_per_image,
-                                                       temperature, seed, style, 10 if reel else 20)
+                                                       temperature, seed, style, 10 if reel else 20, avoid)
             mood = extra.get("mood") or mood
         # Camera details: on the slides the writer chose (all of them without the writer), or as set.
         shown = {"always": [True] * n, "never": [False] * n}.get(camera_details) or extra.get("show_details") \
@@ -476,17 +534,71 @@ class DocumentaryStory:
                  "custom_style": custom_style.strip(), "brief": brief.strip(), "subjects": subjects,
                  "language": language, "target": target, "max_seconds": limit, "details": details}, story)
 
-    def _narrate(self, images, names, notes, details, brief, vision, writer, language, words, temperature, seed,
-                 style, outro_words=20):
+    @staticmethod
+    def _species(images, names, notes, countries, mode, min_confidence, default_country):
+        """Per image {"name", "facts", "animal"}: the subject's name and its
+        facts (the species' Wikipedia intro, from the local species list; ""
+        for both when unknown), and whether it is an animal of unsure species
+        (None: not known). In order: the name given on the photo, a species
+        named in its note, BioCLIP when sure. Nothing leaves the homelab."""
+        known = [{"name": name, "facts": "", "animal": None} for name in names]
+        fallback = species_id.country_code(default_country) or species_id.DEFAULT_COUNTRY
+        codes = [species_id.country_code(c) or fallback for c in countries]
+        if mode == "off":
+            for k, code in zip(known, codes):
+                try:
+                    k["facts"] = species_id.facts(k["name"], code)
+                except Exception:  # no species list (offline)
+                    pass
+            return known
+        try:
+            for k, code in zip(known, codes):
+                if k["name"]:
+                    k["facts"] = species_id.facts(k["name"], code)
+            for k, note, code in zip(known, notes, codes):
+                hit = None if k["name"] else species_id.named_in(note, code)
+                if hit:
+                    k.update(name=hit[0], facts=species_id.facts(hit[1], code), source="your note")
+            todo = [i for i, k in enumerate(known) if not k["name"]]
+            found = []
+            if todo:
+                args = ([images[i][0] for i in todo], [codes[i] for i in todo])
+                try:
+                    found = _local_first(lambda: species_id.identify(*args, comfy.model_management.get_torch_device()))
+                except torch.cuda.OutOfMemoryError:  # the LLMs fill the GPU: slower, on the CPU
+                    found = _local_first(lambda: species_id.identify(*args, "cpu"))
+            for i, picks in zip(todo, found):
+                (common, scientific, p), runner = picks[0], picks[1]
+                known[i]["best"] = f"{common or scientific} {p:.2f}, then {runner[0] or runner[1]} {runner[2]:.2f}"
+                if common is None:
+                    known[i]["animal"] = False  # a landscape, a person, a building: the vision model names it
+                elif p >= min_confidence:
+                    known[i].update(name=common, facts=species_id.facts(scientific, codes[i]),
+                                    source=f"BioCLIP {p:.2f}")
+                else:
+                    known[i]["animal"] = True
+        except Exception as e:  # no network for GBIF, no weights: the vision model guesses, as before
+            print(f"[documentary] species identification failed ({e}); the vision model names the subjects")
+            return [{"name": name, "facts": "", "animal": None} for name in names]
+        for i, k in enumerate(known, 1):
+            said = k["name"] or ("an animal, species unsure" if k["animal"] else "not an animal")
+            print(f"[documentary] species {i}: {said} ({k.get('source') or k.get('best') or 'given'})")
+        return known
+
+    def _narrate(self, images, known, notes, details, brief, vision, writer, language, words, temperature, seed,
+                 style, outro_words=20, avoid=()):
         # One look per image: with all images in one request the vision model lost
         # track of which image it was on. All looks first, then all writing: the
         # two models may share a GPU, and alternating would reload one each time.
         facts = []
-        for image, name, note in zip(images, names, notes):
+        names = [k["name"] for k in known]
+        for image, k, note in zip(images, known, notes):
+            name = k["name"]
             comfy.model_management.throw_exception_if_processing_interrupted()
             look = LOOK_PROMPT.format(brief=brief.strip() or "none",
                                       note=(f"The main subject is: {name} (given by the person who took the photograph; "
                                             f"it is correct, use exactly this as the subject). " if name else "")
+                                      + (UNSURE_SPECIES if k["animal"] else "")
                                       + (f"The person who took this photograph says about it (treat as true): {note} " if note else ""))
             seen = _llm_json(vision, look, LOOK_SCHEMA, 0.2, seed, images=[_jpeg_b64(image)])
             fact = {k: str(seen.get(k, "")).strip() for k in LOOK_FIELDS}
@@ -496,17 +608,15 @@ class DocumentaryStory:
         shots = [{**f, **({"photographer_note": n} if n else {})} for f, n in zip(facts, notes)]
         # Camera details only go into the plan (to decide where they show), not into the writing.
         cameras = [{**shot, "camera": d} if d else shot for shot, d in zip(shots, details)]
-        references = {}
-        for shot, name in zip(shots, names):
-            # A given name is the best search term; else a short note, else the vision model's subject.
-            subject = name or shot.get("photographer_note") or shot["subject"]
-            if subject not in references:
-                references[subject] = _reference_facts(shot["subject"] if len(subject) > 60 else subject)
-            shot["reference"] = references[subject]
+        # True facts only for a known species (its Wikipedia intro, kept locally);
+        # never a lookup online with the photos' subjects or notes.
+        for shot, k in zip(shots, known):
+            if k["facts"]:
+                shot["reference"] = k["facts"]
         n = len(images)
         mood = None
         if style is None:
-            mood = self._pick_mood(shots, brief, writer, seed)
+            mood = self._pick_mood(shots, brief, writer, seed, avoid)
             style = MOODS[mood]
         common = (
             f"Tone and approach: {style} "
@@ -578,6 +688,21 @@ class DocumentaryStory:
             text = str(reply.get("narration", "")).strip()
             if not text:
                 raise RuntimeError(f"{writer} wrote no narration for image {index + 1}; run again or change the seed")
+            # True numbers: the species' facts and the photographer's note (a date, a count).
+            known_text = f"{shot.get('reference', '')} {shot.get('photographer_note', '')}"
+            invented = _unsupported_numbers(text, known_text)
+            if invented:
+                # Once more without them; then without the sentences that still have them.
+                print(f"[documentary] moment {index + 1}: numbers not in its facts ({', '.join(invented)}): rewriting")
+                fix = (f"{prompt} Your first answer was: {json.dumps(text, ensure_ascii=False)}. It states "
+                       f"{', '.join(invented)}, which neither the 'reference' nor the photographer's note says: "
+                       "write it again without those claims and without any other number they don't have.")
+                reply = _llm_json(writer, fix, {"type": "object", "properties": {"narration": {"type": "string"}},
+                                                "required": ["narration"]}, temperature, seed + index + 101)
+                text = str(reply.get("narration", "")).strip() or text
+                invented = _unsupported_numbers(text, known_text)
+                if invented:
+                    text = _drop_sentences_with(text, invented)
             texts.append(text)
         extra = {k: str(plan.get(k, "")).strip().strip('"') for k in ("hook", "outro")}
         # The writer sometimes leaves out the request itself.
@@ -593,9 +718,12 @@ class DocumentaryStory:
         return facts, texts, str(plan.get("title", "")).strip(), extra
 
     @staticmethod
-    def _pick_mood(shots, brief, writer, seed):
-        """The mood (a key of MOODS) that fits what the vision model saw."""
+    def _pick_mood(shots, brief, writer, seed, avoid=()):
+        """The mood (a key of MOODS) that fits what the vision model saw, not
+        one of `avoid` (e.g. the last nights' moods) while two others are left."""
         moods = {k: v for k, v in MOODS.items() if v}
+        if len([k for k in moods if k not in avoid]) >= 2:
+            moods = {k: v for k, v in moods.items() if k not in avoid}
         seen = [{k: s[k] for k in ("subject", "activity", "setting", "others", "photographer_note") if s.get(k)}
                 for s in shots]
         prompt = (
@@ -612,7 +740,7 @@ class DocumentaryStory:
                                               "properties": {"mood": {"type": "string", "enum": list(moods)},
                                                              "why": {"type": "string"}},
                                               "required": ["mood", "why"]}, 0.5, seed)
-        mood = reply.get("mood") if reply.get("mood") in moods else DEFAULT_MOOD
+        mood = reply.get("mood") if reply.get("mood") in moods else next(iter(moods))
         print(f"[documentary] mood: {mood} ({str(reply.get('why', '')).strip()[:200]})")
         return mood
 
@@ -670,7 +798,10 @@ class NarrateStoryboard:
     FUNCTION = "run"
     CATEGORY = "documentary"
 
-    def run(self, storyboard, voice, speed, engine="kokoro", intensity=0.0, outro="", my_voice=None):
+    def run(self, *args, **kwargs):
+        return _local_first(lambda: self._run(*args, **kwargs))
+
+    def _run(self, storyboard, voice, speed, engine="kokoro", intensity=0.0, outro="", my_voice=None):
         preset = {**VOICE_PRESETS[DEFAULT_MOOD], **VOICE_PRESETS.get(storyboard.get("mood"), {})}
         if voice != AUTO_VOICE:
             preset["voice"] = voice
@@ -784,12 +915,23 @@ REFERENCE_TEXT = ("The river bends through the valley, past the old stone bridge
                   "falls softly on the water and the reeds lean in the wind.")
 
 
+CHATTERBOX_REPO = "ResembleAI/chatterbox"
+CHATTERBOX_FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]
+
+
 def _chatterbox_model(device):
-    os.environ.setdefault("HF_HOME", os.path.join(folder_paths.models_dir, "chatterbox", "hf"))
+    import pathlib
+
     from chatterbox.tts import ChatterboxTTS
+    from huggingface_hub import hf_hub_download
 
     if "model" not in _chatterbox:
-        _chatterbox["model"] = ChatterboxTTS.from_pretrained(device=str(device))
+        # The files from_pretrained() would fetch, but into models/chatterbox
+        # by name: setting HF_HOME here was too late once huggingface_hub had
+        # been imported (it reads it then), and the weights weren't found offline.
+        cache = os.path.join(folder_paths.models_dir, "chatterbox", "hf", "hub")
+        path = [hf_hub_download(CHATTERBOX_REPO, f, cache_dir=cache) for f in CHATTERBOX_FILES][-1]
+        _chatterbox["model"] = ChatterboxTTS.from_local(pathlib.Path(path).parent, device=str(device))
     model = _chatterbox["model"]
     _chatterbox_move(model, device)
     return model

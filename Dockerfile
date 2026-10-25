@@ -71,6 +71,13 @@ RUN pip install --no-deps "chatterbox-tts==$CHATTERBOX_VERSION" \
       pre_commit==4.7.0 cfgv==3.5.0 identify==2.6.20 nodeenv==1.11.0 \
       virtualenv==21.14.7 distlib==0.4.3 python-discovery==1.6.2 \
  && python -c "import chatterbox.tts, torchaudio, librosa, perth, s3tokenizer"
+
+# open_clip for BioCLIP 2, the documentary's species identifier (weights
+# download to /data/models/bioclip on first use). Its other dependencies
+# (regex, tqdm, PyYAML, safetensors, huggingface_hub) are already installed;
+# --no-deps so it can't replace the image's PyTorch.
+RUN pip install --no-deps open_clip_torch==3.3.0 timm==1.0.30 ftfy==6.3.1 wcwidth==0.9.4 \
+ && python -c "import open_clip, timm, ftfy"
 COPY nodes/ /opt/comfyui-nodes/
 
 # /app/web/extensions writable: some older custom nodes (e.g.
