@@ -2003,6 +2003,9 @@ class DocumentaryThumbnail:
     CATEGORY = "documentary"
 
     def run(self, storyboard, width, height, photo, headline, label):
+        # It only needs the story, so it can run right after it, while the
+        # writer still fills the GPU.
+        _free_gpu()
         images = storyboard["images"]
         index = photo - 1 if 1 <= photo <= len(images) else _best_photo(images)
         device = comfy.model_management.get_torch_device()
