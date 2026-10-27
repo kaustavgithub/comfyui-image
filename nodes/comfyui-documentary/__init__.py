@@ -202,8 +202,67 @@ MOODS = {
         "bird that wouldn't sit still, a long lens for one that was far away), at most twice in the whole film. "
         "When a moment has a 'reference', one interesting fact from it."
     ),
+    # Reel formats with a fixed job per photo (SHOT_LISTS).
+    "mini-documentary": (
+        "A calm, observant, grounded and atmospheric wildlife documentary voice, in the style of BBC Earth: "
+        "unhurried, precise, quietly in awe. No social media slang, no exclamation marks."
+    ),
+    "photographer's craft": (
+        "A wildlife photographer on the craft: authentic, technical yet accessible, appreciative of both the craft "
+        "and nature. Plain words for technique (the light, the soft background, sharp focus, the catchlight in "
+        "the eye, timing); a camera setting only when it is the point."
+    ),
+    "species spotlight": (
+        "A visual curator presenting a gallery of birds: rhythmic, brisk and engaging, each line a crisp "
+        "spotlight on one bird."
+    ),
     "custom": "",
 }
+# Moods with a fixed job for each photo, in order, and the words per photo
+# (least, most); "camera": the writer sees the camera settings; "ask": the
+# last narration must say one of these words, else it is rewritten, and
+# finally gets "ask_line". For a number of photos other than the list's, the
+# first and last jobs stay, the middle ones are spread. Never picked by auto:
+# they are made for reels.
+SHOT_LISTS = {
+    "mini-documentary": {"words": (8, 12), "jobs": [
+        "The hook: set the scene, the weather or the mood, and the patience waiting in the wild takes.",
+        "The discovery: spotting the subject, and how it meets the light or the foliage around it.",
+        "The detail: one behavioural detail, the texture of its feathers, or its posture.",
+        "The climax: the most striking thing in this moment (eye contact, the sharpest focus or its peak pose).",
+        "The sign-off: a poetic closing thought about capturing fleeting moments in nature.",
+    ]},
+    "photographer's craft": {"words": (8, 12), "camera": True, "ask": ("prefer", "favourite", "favorite"),
+                             "ask_line": "Which shot do you prefer?", "jobs": [
+        "The hook: the challenge of wildlife photography (fleeting light, tiny windows of opportunity).",
+        "Framing: the setting, the depth of field (the soft background blur), or how the subject separates "
+        "from the background.",
+        "Sharpness: the tack-sharp focus, the catchlight in its eye, or fine feather detail.",
+        "Timing: the mood, the colour palette, or the split-second timing of the pose.",
+        "The sign-off: why patience in the field pays off, then end by asking the viewer which shot they "
+        "prefer (say 'prefer').",
+    ]},
+    "species spotlight": {"words": (4, 10), "ask": ("favourite", "favorite"),
+                          "ask_line": "Comment your favourite, 1 to {n}.", "jobs": [
+        "The hook: a bold statement about the beauty of birds, introducing this first bird's standout feature.",
+        "Contrast: move on smoothly by contrasting this bird's colour, posture or mood with the one before.",
+        "Presence: the intensity, the stillness or the surroundings of this bird.",
+        "Character: the light on this bird and its distinct character.",
+        "Call to action: this last bird in a few words, then end by asking the viewer to comment their "
+        "favourite, from 1 to {n} (say 'favourite').",
+    ]},
+}
+# The camera moves the writer chooses from, per photo (Ken Burns Video's
+# motion STORY_MOTION uses them).
+MOVES = ["zoom in", "zoom out", "pan right", "pan left"]
+STORY_MOTION = "auto (from story)"
+
+
+def _shot_jobs(shot_list, n):
+    """The list's jobs for n photos: first and last as they are, the middle ones spread."""
+    jobs = [j.replace("{n}", str(n)) for j in shot_list["jobs"]]
+    middle = jobs[1:-1]
+    return [jobs[0]] + [middle[min(len(middle) - 1, i * len(middle) // (n - 2))] for i in range(n - 2)] + [jobs[-1]]
 DEFAULT_MOOD = "documentary (Nat Geo)"
 # The photographer's own story of each shot: the writer also sees the camera settings.
 LENS_MOOD = "behind the lens"
@@ -228,6 +287,9 @@ MOOD_LABELS = {
     "sports commentary": "The final",
     "mystery / noir": "A case file",
     "behind the lens": "Behind the shot",
+    "mini-documentary": "The story behind the shot",
+    "photographer's craft": "Behind the lens",
+    "species spotlight": "Spotlight",
 }
 # Spoken at the end when the story has no closing line of its own.
 DEFAULT_OUTRO = "If you enjoyed this story, follow for more."
@@ -293,6 +355,9 @@ VOICE_PRESETS = {
     "sports commentary": {"voice": "am_michael", "intensity": 1.4, "cfg": 0.3, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.15},
     "mystery / noir": {"voice": "bm_lewis", "intensity": 0.6, "cfg": 0.4, "stretch": 0.95, "semitones": -1, "kokoro_speed": 0.9},
     "behind the lens": {"voice": "bm_fable", "intensity": 0.45, "cfg": 0.55, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.0},
+    "mini-documentary": {"voice": "bm_george", "intensity": 0.4, "cfg": 0.55, "stretch": 0.97, "semitones": 0, "kokoro_speed": 0.92},
+    "photographer's craft": {"voice": "bm_fable", "intensity": 0.5, "cfg": 0.5, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.0},
+    "species spotlight": {"voice": "af_bella", "intensity": 0.7, "cfg": 0.45, "stretch": 1.0, "semitones": 0, "kokoro_speed": 1.05},
 }
 AUTO_VOICE = "auto (from mood)"
 # Your own voice (my_voice): at most this much expression, at least this cfg.
@@ -304,12 +369,15 @@ LOOK_PROMPT = (
     "a place or landmark by name if you recognise it, people by what they are doing (never guess who they are). "
     "Say what it is doing right now, and what it holds in its beak, mouth, hands or claws, if anything. "
     "Describe the ground or setting it is in (for example grass, water, rock, sky, street, room), "
-    "and list other living things in the scene. Facts only, no style. "
+    "and list other living things in the scene. "
+    "Say where the main subject sits in the frame, how much of it it fills and which way it faces (for example "
+    "'small, in the left third, facing right', 'fills the frame, centred, facing the camera'). Facts only, no style. "
     "Background from the person who took the photos: {brief} "
     "{note}"
-    'Answer only with JSON: {{"subject": "...", "activity": "...", "holding": "...", "setting": "...", "others": "..."}}'
+    'Answer only with JSON: {{"subject": "...", "activity": "...", "holding": "...", "setting": "...", "others": "...", '
+    '"framing": "..."}}'
 )
-LOOK_FIELDS = ("subject", "activity", "holding", "setting", "others")
+LOOK_FIELDS = ("subject", "activity", "holding", "setting", "others", "framing")
 LOOK_SCHEMA = {
     "type": "object",
     "properties": {k: {"type": "string"} for k in LOOK_FIELDS},
@@ -512,7 +580,10 @@ class DocumentaryStory:
         title, facts, extra = "", [], {}
         reel = target == REEL
         limit = _limit({"target": target, "max_seconds": max_seconds})
-        if reel:
+        shot_list = None if custom_style.strip() else SHOT_LISTS.get(mood)
+        if shot_list:
+            words_per_image = shot_list["words"][1]
+        elif reel:
             words_per_image = _reel_words(n, max_seconds)
         elif limit > 0:
             words_per_image = _video_words(n, limit, words_per_image)
@@ -527,21 +598,24 @@ class DocumentaryStory:
             facts, texts, title, extra = self._narrate(images, known, notes, details,
                                                        camera_details == CAMERA_DETAILS[0], brief, model, writer,
                                                        language, words_per_image, temperature, seed, style,
-                                                       10 if reel else 20, avoid)
+                                                       10 if reel else 20, avoid, shot_list)
             mood = extra.get("mood") or mood
         # Camera details: on the slides the writer chose (all of them without the writer), or as set.
         shown = {"always": [True] * n, "never": [False] * n}.get(camera_details) or extra.get("show_details") \
             or [True] * n
         details = [d if d and show else "" for d, show in zip(details, shown)]
         hook, outro = extra.get("hook", ""), extra.get("outro", "")
-        story = (f"{title}\n\n" if title else "") + (f"Mood: {mood}\n\n" if auto else "") + (
-            f"Thumbnail: {hook}\n\n" if hook else "") + "\n\n".join(
-            f"[{i + 1}]" + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
+        motions, cover = extra.get("motions") or [], extra.get("cover")
+        story = (f"{title}\n\n" if title else "") + (f"Mood: {mood}\n\n" if auto or shot_list else "") + (
+            f"Thumbnail: {hook}" + (f" (photo {cover})" if cover else "") + "\n\n" if hook else "") + "\n\n".join(
+            f"[{i + 1}]" + (f" <{motions[i]}>" if i < len(motions) else "")
+            + (f" ({facts[i]['subject']}: {facts[i]['activity']})" if facts else "") + f" {t}"
             for i, t in enumerate(texts)) + (f"\n\n[end] {outro}" if outro else "")
         subjects = [f["subject"] for f in facts] if facts else [x for x in names if x]
         return ({"images": images, "texts": texts, "title": title, "hook": hook, "outro": outro, "mood": mood,
                  "custom_style": custom_style.strip(), "brief": brief.strip(), "subjects": subjects,
-                 "language": language, "target": target, "max_seconds": limit, "details": details}, story)
+                 "language": language, "target": target, "max_seconds": limit, "details": details,
+                 "motions": motions, "cover": cover}, story)
 
     @staticmethod
     def _species(images, names, notes, mode, min_confidence):
@@ -593,8 +667,10 @@ class DocumentaryStory:
         return known
 
     def _narrate(self, images, known, notes, details, ask_show, brief, vision, writer, language, words,
-                 temperature, seed, style, outro_words=20, avoid=()):
-        """ask_show: the plan says on which slides the camera details fit."""
+                 temperature, seed, style, outro_words=20, avoid=(), shot_list=None):
+        """ask_show: the plan says on which slides the camera details fit.
+        shot_list: one of SHOT_LISTS (each photo's job fixed; the plan also
+        picks a camera move per photo and the cover photo)."""
         # One look per image: with all images in one request the vision model lost
         # track of which image it was on. All looks first, then all writing: the
         # two models may share a GPU, and alternating would reload one each time.
@@ -627,17 +703,21 @@ class DocumentaryStory:
         if style is None:
             mood = self._pick_mood(shots, brief, writer, seed, avoid)
             style = MOODS[mood]
-        lens = style == MOODS[LENS_MOOD]
+        lens = style == MOODS[LENS_MOOD] or bool(shot_list and shot_list.get("camera"))
         if lens:
             shots = cameras  # the hour, lens and shutter speed are this story's material
         common = (
             f"Tone and approach: {style} "
             + (f"Background from the person who took the photos: {brief.strip()} " if brief.strip() else "")
-            + "The viewer sees each picture while the narration plays, so never describe what is visible "
-            "(colours, poses, perches, grass, sky). Use what is in the pictures only as the starting point, "
-            "and give the viewer what they can't see: the story, the stakes, feelings, meaning, jokes, true facts. "
+            + ("The viewer sees each picture while the narration plays: point at what is visible only where the "
+               "moment's job asks for it (the light, feathers, posture, colour, the background), and say what it "
+               "adds rather than list it. " if shot_list else
+               "The viewer sees each picture while the narration plays, so never describe what is visible "
+               "(colours, poses, perches, grass, sky). Use what is in the pictures only as the starting point, "
+               "and give the viewer what they can't see: the story, the stakes, feelings, meaning, jokes, true facts. ")
             + ("Talk about taking the shot, but never say 'photo', 'image', 'picture', 'frame' or 'slide'. " if lens
-               else "Never mention a photo, image, picture, camera, frame, shot, slide or background. ")
+               else "Never mention a photo, image, picture, camera, frame, shot, slide or background. "
+               if not shot_list else "Never say 'photo', 'image', 'picture' or 'slide'. ")
             + "Speak to the viewer, in short sentences that are easy to say aloud. "
             "Real-world facts (numbers, habits, abilities, records) may only come from the 'reference' text given "
             "for a moment; never invent or embellish one, and if there is no reference, use no facts. "
@@ -650,17 +730,31 @@ class DocumentaryStory:
         # Plan first, so the moments add up to one story instead of n captions.
         has_camera = ask_show and any(details)
         seen = cameras if has_camera or lens else shots
+        jobs = _shot_jobs(shot_list, n) if shot_list else None
         plan_prompt = (
             f"You are writing a narrated slideshow of {n} moments, in {language}. {common}"
             f"What an observer saw in each moment, in order: {json.dumps(seen, ensure_ascii=False)}. "
-            f"Plan the narration as one story in this tone: a title, a one-sentence premise, and exactly {n} beats, "
-            "one per moment in order, each saying what that moment's narration does for the story "
-            "(not what the picture shows). "
-            "Also an 'opening': the very first line the viewer hears, at most 12 words, that stops someone "
-            "scrolling past: a question, a surprise or a bold promise of what's coming, in this tone, and true "
-            "(no invented facts). "
-            "Also a 'hook': a thumbnail headline of 2 to 5 words that makes people want to watch (no quotes, no "
-            f"hashtags), and an 'outro': one short closing line to be spoken at the very end, under {outro_words} words, in the "
+            + (f"Each moment's job is fixed, in order: {json.dumps(jobs, ensure_ascii=False)}. Plan the narration "
+               "as one story in this tone that does those jobs: a title, a one-sentence premise, and the beats "
+               "(each moment's job as given). "
+               "Also 'motions': for each moment, in order, the camera move over the picture that suits where "
+               f"the subject sits in it ('framing'), one of {json.dumps(MOVES)}: zoom in when it is small in a "
+               "wide scene, zoom out when it fills the picture, pan towards the side it faces or moves to, so the "
+               "move ends on it; not the same move every time. "
+               f"Also 'cover': the number (1 to {n}) of the strongest moment for the cover: the sharpest, most "
+               "striking subject, eye contact or a peak pose. "
+               "Also a 'hook': a thumbnail text overlay of 3 to 4 words for that cover, punchy and in this "
+               "tone (no quotes, no hashtags), "
+               if jobs else
+               f"Plan the narration as one story in this tone: a title, a one-sentence premise, and exactly {n} beats, "
+               "one per moment in order, each saying what that moment's narration does for the story "
+               "(not what the picture shows). "
+               "Also an 'opening': the very first line the viewer hears, at most 12 words, that stops someone "
+               "scrolling past: a question, a surprise or a bold promise of what's coming, in this tone, and true "
+               "(no invented facts). "
+               "Also a 'hook': a thumbnail headline of 2 to 5 words that makes people want to watch (no quotes, no "
+               "hashtags), ")
+            + f"and an 'outro': one short closing line to be spoken at the very end, under {outro_words} words, in the "
             "same tone, that asks the viewer to follow for more stories like this; it must say 'follow' (in the "
             "story's language), and no names, handles or hashtags. "
             + ("Some moments have 'camera': the settings the photo was taken with. They can be shown as a small "
@@ -670,20 +764,29 @@ class DocumentaryStory:
                "part of the story (then on most moments that have them), no where it would break the spell "
                "(a bedtime story, a joke, a noir mystery). "
                if has_camera else "")
-            + 'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "opening": "...", '
-            '"hook": "...", "outro": "..."' + (', "show_details": [true, ...]' if has_camera else "") + "}"
+            + ('Answer only with JSON: {"title": "...", "premise": "...", "motions": ["...", ...], "cover": 1, '
+               '"hook": "...", "outro": "..."' if jobs else
+               'Answer only with JSON: {"title": "...", "premise": "...", "beats": ["...", ...], "opening": "...", '
+               '"hook": "...", "outro": "..."') + (', "show_details": [true, ...]' if has_camera else "") + "}"
         )
-        properties = {"title": {"type": "string"}, "premise": {"type": "string"},
-                      "beats": {"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n},
-                      "opening": {"type": "string"}, "hook": {"type": "string"}, "outro": {"type": "string"}}
+        properties = {"title": {"type": "string"}, "premise": {"type": "string"}}
+        if jobs:
+            properties.update(motions={"type": "array", "items": {"type": "string", "enum": MOVES},
+                                       "minItems": n, "maxItems": n},
+                              cover={"type": "integer", "minimum": 1, "maximum": n})
+        else:
+            properties.update(beats={"type": "array", "items": {"type": "string"}, "minItems": n, "maxItems": n},
+                              opening={"type": "string"})
+        properties.update(hook={"type": "string"}, outro={"type": "string"})
         if has_camera:
             properties["show_details"] = {"type": "array", "items": {"type": "boolean"}, "minItems": n,
                                           "maxItems": n}
         plan = _llm_json(writer, plan_prompt, {"type": "object", "properties": properties,
                                                   "required": list(properties)}, temperature, seed)
-        beats = [str(b).strip() for b in plan.get("beats", [])]
+        beats = jobs or [str(b).strip() for b in plan.get("beats", [])]
         beats += [""] * (n - len(beats))
-        opening = str(plan.get("opening", "")).strip().strip('"')
+        # A shot list's first job is the hook: no opening line before it.
+        opening = "" if jobs else str(plan.get("opening", "")).strip().strip('"')
         print(f"[documentary] opening: {opening!r}")
         texts, named = [], set()
         for index, (shot, beat) in enumerate(zip(shots, beats)):
@@ -703,9 +806,11 @@ class DocumentaryStory:
                 + (f"Nobody knows this animal's species: call it only {json.dumps(shot.get('subject', ''))} or "
                    "a word like it, never by a species name. " if known[index]["animal"] else "")
                 + f"What an observer saw in this moment (the viewer sees it too; don't list it): "
-                f"{json.dumps(shot, ensure_ascii=False)}. "
-                f"Write {words} words at most, to be spoken aloud in {language}. "
-                "Vary how sentences start, and never use the phrase 'right now'. "
+                # Without 'framing': it is for the plan's camera moves, and the writer would say it.
+                f"{json.dumps({k: v for k, v in shot.items() if k != 'framing'}, ensure_ascii=False)}. "
+                + (f"Write {shot_list['words'][0]} to {words} words, strictly, to be spoken aloud in {language}. "
+                   if shot_list else f"Write {words} words at most, to be spoken aloud in {language}. ")
+                + "Vary how sentences start, and never use the phrase 'right now'. "
                 + (f"The moments so far were narrated like this; continue the story from them without repeating "
                    f"their phrases, images or jokes: {json.dumps(texts, ensure_ascii=False)}. " if texts else "")
                 + 'Answer only with JSON: {"narration": "..."}'
@@ -715,18 +820,24 @@ class DocumentaryStory:
             text = str(reply.get("narration", "")).strip()
             if not text:
                 raise RuntimeError(f"{writer} wrote no narration for image {index + 1}; run again or change the seed")
-            if len(text.split()) > words * 1.2:
-                # The writer overruns "at most N words", and Narrate can only speed up so much.
+            # The writer overruns "at most N words", and Narrate can only speed up so much;
+            # a shot list's limit is strict (two tries).
+            for attempt in range(2 if shot_list else 1):
+                if len(text.split()) <= (words if shot_list else words * 1.2):
+                    break
                 print(f"[documentary] moment {index + 1}: {len(text.split())} words for {words}: shortening")
                 short = (f"{prompt} Your first answer was: {json.dumps(text, ensure_ascii=False)}. It has "
                          f"{len(text.split())} words; the limit is {words}. Write it again in at most {words} words, "
                          "keeping its best line.")
                 reply = _llm_json(writer, short, {"type": "object", "properties": {"narration": {"type": "string"}},
-                                                  "required": ["narration"]}, temperature, seed + index + 201)
+                                                  "required": ["narration"]}, temperature,
+                                  seed + index + 201 + 50 * attempt)
                 text = str(reply.get("narration", "")).strip() or text
             # True numbers: the species' facts, the photographer's note (a date, a
             # count) and, for LENS_MOOD, the camera settings.
             known_text = f"{shot.get('reference', '')} {shot.get('photographer_note', '')} {shot.get('camera', '')}"
+            if shot_list:
+                known_text += " " + " ".join(str(i) for i in range(1, n + 1))  # "your favourite, from 1 to 5"
             invented = _unsupported_numbers(text, known_text)
             if invented:
                 # Once more without them; then without the sentences that still have them.
@@ -740,9 +851,37 @@ class DocumentaryStory:
                 invented = _unsupported_numbers(text, known_text)
                 if invented:
                     text = _drop_sentences_with(text, invented)
+            ask = shot_list.get("ask") if shot_list and index == n - 1 else None
+            if ask and not any(w in text.lower() for w in ask):
+                # The closing question is the point of the last moment.
+                print(f"[documentary] moment {index + 1}: no question to the viewer: rewriting")
+                again = (f"{prompt} Your first answer was: {json.dumps(text, ensure_ascii=False)}. It doesn't do "
+                         f"the job's question to the viewer: write it again, ending with that question, in at most "
+                         f"{words} words.")
+                reply = _llm_json(writer, again, {"type": "object", "properties": {"narration": {"type": "string"}},
+                                                  "required": ["narration"]}, temperature, seed + index + 301)
+                text = str(reply.get("narration", "")).strip() or text
+                if not any(w in text.lower() for w in ask):
+                    text = f"{text} {shot_list['ask_line'].replace('{n}', str(n))}"
             texts.append(text)
             named.add(shot.get("name"))
         extra = {k: str(plan.get(k, "")).strip().strip('"') for k in ("hook", "outro")}
+        if jobs and not 3 <= len(extra["hook"].split()) <= 4:
+            # The cover's text overlay: 3 to 4 words.
+            for attempt in range(2):
+                reply = _llm_json(writer, (
+                    f"A thumbnail text overlay for a narrated reel titled \"{plan.get('title', '')}\" in this tone: "
+                    f"{style} The first idea was {json.dumps(extra['hook'], ensure_ascii=False)}, which has "
+                    f"{len(extra['hook'].split())} words. Write a punchy one of 3 to 4 words (no quotes, no "
+                    'hashtags). Answer only with JSON: {"hook": "..."}'),
+                    {"type": "object", "properties": {"hook": {"type": "string"}}, "required": ["hook"]},
+                    temperature, seed + 401 + attempt)
+                hook = str(reply.get("hook", "")).strip().strip('"')
+                if 3 <= len(hook.split()) <= 4:
+                    extra["hook"] = hook
+                    break
+            else:
+                extra["hook"] = " ".join(extra["hook"].split()[:4])
         # The writer sometimes leaves out the request itself.
         if language.strip().lower() == "english" and "follow" not in extra["outro"].lower():
             extra["outro"] = f"{extra['outro']} Follow for more stories like this.".strip()
@@ -751,6 +890,13 @@ class DocumentaryStory:
             extra["show_details"] = shown + [False] * (n - len(shown))
             print(f"[documentary] camera details on slides: "
                   f"{[i + 1 for i, s in enumerate(extra['show_details']) if s and details[i]] or 'none'}")
+        if jobs:
+            moves = [m if m in MOVES else MOVES[i % len(MOVES)] for i, m in enumerate(plan.get("motions") or [])][:n]
+            extra["motions"] = moves + [MOVES[i % len(MOVES)] for i in range(len(moves), n)]
+            cover = plan.get("cover")
+            extra["cover"] = cover if isinstance(cover, int) and 1 <= cover <= n else None
+            print(f"[documentary] camera moves: {', '.join(extra['motions'])}; cover: photo {extra['cover']}, "
+                  f"{extra['hook']!r}")
         if mood:
             extra["mood"] = mood
         return facts, texts, str(plan.get("title", "")).strip(), extra
@@ -759,7 +905,7 @@ class DocumentaryStory:
     def _pick_mood(shots, brief, writer, seed, avoid=()):
         """The mood (a key of MOODS) that fits what the vision model saw, not
         one of `avoid` (e.g. the last nights' moods) while two others are left."""
-        moods = {k: v for k, v in MOODS.items() if v}
+        moods = {k: v for k, v in MOODS.items() if v and k not in SHOT_LISTS}
         if len([k for k in moods if k not in avoid]) >= 2:
             moods = {k: v for k, v in moods.items() if k not in avoid}
         seen = [{k: s[k] for k in ("subject", "activity", "setting", "others", "photographer_note") if s.get(k)}
@@ -1186,6 +1332,12 @@ MUSIC = {
                           "anthem, upbeat and exciting, instrumental", 128, "E major"),
     "mystery / noir": ("film noir jazz, smoky muted trumpet, upright bass, brushed drums, slow piano, moody and "
                        "mysterious, instrumental", 72, "C minor"),
+    "mini-documentary": ("atmospheric nature documentary score, soft strings, warm pads, gentle piano, calm and "
+                         "observant, instrumental", 72, "D major"),
+    "photographer's craft": ("warm acoustic guitar and soft piano, light percussion, thoughtful and appreciative, "
+                             "instrumental", 88, "G major"),
+    "species spotlight": ("rhythmic modern chill beat, plucked synths, soft marimba, light drums, bright and "
+                          "engaging, instrumental", 104, "A major"),
 }
 
 
@@ -1762,7 +1914,9 @@ class KenBurnsVideo:
                                    "tooltip": "For a YouTube video; a reel is always 1080x1920"}),
                 "fps": ("INT", {"default": 30, "min": 10, "max": 60}),
                 "zoom": ("FLOAT", {"default": 1.2, "min": 1.0, "max": 2.0, "step": 0.05}),
-                "motion": (["alternate", "random", "zoom in", "zoom out", "pan right", "pan left"],),
+                "motion": (["alternate", "random"] + MOVES + [STORY_MOTION],
+                           {"tooltip": "The camera move over each photo; 'auto (from story)': the one the story "
+                                       "chose for it (a reel format such as 'mini-documentary'), else alternate"}),
                 "pause_before": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 5.0, "step": 0.1,
                                            "tooltip": "Seconds of image before each narration starts"}),
                 "pause_after": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1,
@@ -1858,7 +2012,11 @@ class KenBurnsVideo:
         for index, (image, clip, timing, text, detail) in enumerate(zip(images, storyboard["audio"], timings,
                                                                        storyboard["texts"], details)):
             frames = math.ceil((pause_before + len(clip) / rate + pause_after) * fps)
-            add(_PhotoScene(image, index, motion, zoom, rng, width, height, device, tall=reel, details=detail),
+            move = motion
+            if motion == STORY_MOTION:
+                moves = storyboard.get("motions") or []
+                move = moves[index] if index < len(moves) and moves[index] in MOVES else "alternate"
+            add(_PhotoScene(image, index, move, zoom, rng, width, height, device, tall=reel, details=detail),
                 frames, clip, pause_before, timing, text)
         if outro_seconds > 0:
             tail = 1.1 if reel else 1.6
@@ -1990,7 +2148,8 @@ class DocumentaryThumbnail:
                 "height": ("INT", {"default": 1080, "min": 256, "max": 3840, "step": 2,
                                    "tooltip": "For a YouTube video; a reel's cover is always 1080x1920"}),
                 "photo": ("INT", {"default": 0, "min": 0, "max": MAX_IMAGES,
-                                  "tooltip": "Which photo (1, 2, ...); 0 = the sharpest, most colourful one"}),
+                                  "tooltip": "Which photo (1, 2, ...); 0 = the story's cover choice (a reel "
+                                             "format such as 'mini-documentary'), else the sharpest, most colourful one"}),
                 "headline": ("STRING", {"default": "",
                                         "placeholder": "Optional: the text on the thumbnail. Empty: the story's hook"}),
                 "label": ("STRING", {"default": "", "placeholder": "Optional: the small label. Empty: from the mood"}),
@@ -2007,7 +2166,9 @@ class DocumentaryThumbnail:
         # writer still fills the GPU.
         _free_gpu()
         images = storyboard["images"]
-        index = photo - 1 if 1 <= photo <= len(images) else _best_photo(images)
+        cover = storyboard.get("cover")
+        index = photo - 1 if 1 <= photo <= len(images) else \
+            cover - 1 if isinstance(cover, int) and 1 <= cover <= len(images) else _best_photo(images)
         device = comfy.model_management.get_torch_device()
         reel = _is_reel(storyboard)
         if reel:
