@@ -11,7 +11,8 @@
 #               only with --enable-manager
 # Custom nodes: installed with the Manager at runtime, into /data/custom_nodes;
 # their Python packages go into a virtualenv at /data/venv (see entrypoint.sh).
-# Our own nodes are in nodes/ and come with the image.
+# Our own node packs and workflows are not in the image: they come from
+# github.com/kaustavgithub/comfyui-workflows (the deployment links them).
 FROM python:3.12.15-slim-trixie
 
 ARG COMFYUI_VERSION=v0.39.0
@@ -26,7 +27,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 # git: the Manager clones custom nodes. ffmpeg, libgl1, libglib2.0-0: what
 # common custom nodes need at runtime (video nodes, OpenCV). build-essential:
 # for node requirements without a prebuilt wheel. fonts-dejavu-core: the
-# documentary nodes draw titles, subtitles and thumbnails with DejaVu.
+# documentary nodes' classic look (titles, subtitles, thumbnails).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 build-essential fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
@@ -42,8 +43,8 @@ RUN pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" \
  && pip install -r requirements.txt \
  && pip install -r manager_requirements.txt
 
-# Our own nodes (nodes/, reviewed in Git); the entrypoint links them into
-# /data/custom_nodes. comfyui-documentary needs Kokoro TTS (weights download
+# The Python packages our node packs need (comfyui-workflows: they are not
+# in the image). comfyui-documentary needs Kokoro TTS (weights download
 # to /data/models/kokoro on first use) and spaCy's small English model, which
 # Kokoro would otherwise try to download at runtime.
 ARG KOKORO_VERSION=0.9.4
@@ -82,7 +83,6 @@ RUN pip install --no-deps "chatterbox-tts==$CHATTERBOX_VERSION" \
 # --no-deps so it can't replace the image's PyTorch.
 RUN pip install --no-deps open_clip_torch==3.3.0 timm==1.0.30 ftfy==6.3.1 wcwidth==0.9.4 \
  && python -c "import open_clip, timm, ftfy"
-COPY nodes/ /opt/comfyui-nodes/
 
 # /app/web/extensions writable: some older custom nodes (e.g.
 # ComfyUI-Custom-Scripts) copy their web files there on every start and fail

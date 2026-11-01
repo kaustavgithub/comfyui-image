@@ -30,12 +30,8 @@ if [ "$(cat "$VENV/.python-version" 2>/dev/null)" != "$PYVER" ]; then
 fi
 export VIRTUAL_ENV="$VENV" PATH="$VENV/bin:$PATH"
 
-# Our own nodes come with the image (/opt/comfyui-nodes): link each into
-# custom_nodes, replacing an older link.
-for n in /opt/comfyui-nodes/*/; do
-  n=${n%/}
-  ln -sfn "$n" "/data/custom_nodes/$(basename "$n")"
-done
+# Our own node packs and workflows are not in the image: the deployment's init
+# container links them from github.com/kaustavgithub/comfyui-workflows.
 
 # Manager settings, enforced on every start:
 # - network_mode = personal_cloud: it refuses to install nodes and models
